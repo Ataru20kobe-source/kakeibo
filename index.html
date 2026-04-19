@@ -55,8 +55,6 @@
   .sync-dot.ok{color:#4caf50}
   .sync-dot.syncing{color:var(--gold)}
   .sync-dot.err{color:var(--red)}
-
-  /* ログイン画面 */
   #loginScreen{display:none;position:fixed;inset:0;background:var(--paper);z-index:9999;flex-direction:column;align-items:center;justify-content:center;gap:24px}
   #loginScreen.show{display:flex}
   #mainScreen{display:none}
@@ -65,7 +63,6 @@
 </head>
 <body>
 
-<!-- ログイン画面 -->
 <div id="loginScreen">
   <div style="text-align:center;margin-bottom:8px">
     <h1 style="font-size:2rem;font-weight:700;letter-spacing:.1em;color:var(--ink)">家計簿</h1>
@@ -81,7 +78,6 @@
   <p style="font-size:.65rem;color:#aaa;text-align:center;max-width:280px;line-height:1.6">ログインすることであなただけのデータに安全にアクセスできます</p>
 </div>
 
-<!-- メイン画面 -->
 <div id="mainScreen">
   <div style="background:var(--ink);padding:14px 16px;display:flex;align-items:center;justify-content:space-between">
     <div style="display:flex;align-items:baseline;gap:10px">
@@ -91,18 +87,16 @@
     <div style="display:flex;align-items:center;gap:10px">
       <span id="syncStatus" class="sync-dot ok">● 同期済</span>
       <div style="display:flex;align-items:center;gap:6px">
-        <img id="userAvatar" style="width:26px;height:26px;border-radius:50%;display:none" />
+        <img id="userAvatar" style="width:26px;height:26px;border-radius:50%;display:none"/>
         <button id="btnLogout" style="background:none;border:1px solid #4a4035;border-radius:5px;padding:4px 9px;font-size:.65rem;color:#a09080;cursor:pointer;font-family:inherit">ログアウト</button>
       </div>
     </div>
   </div>
-
   <div style="background:var(--cream);border-bottom:1px solid var(--border);padding:7px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
     <span class="lbl" style="margin-bottom:0;white-space:nowrap">給与月</span>
     <input type="month" id="cycleInput" style="width:148px"/>
     <span id="cycleRange" style="font-size:.68rem;color:#8a7e72;white-space:nowrap"></span>
   </div>
-
   <div style="background:#fff;border-bottom:1px solid var(--border);display:flex;padding-left:4px;overflow-x:auto">
     <button class="tab on" data-tab="dash">📊 概要</button>
     <button class="tab" data-tab="budget">📅 週次予算</button>
@@ -112,7 +106,6 @@
     <button class="tab" data-tab="ai">✦ AI</button>
     <button class="tab" data-tab="guide">📖 ガイド</button>
   </div>
-
   <div id="app" style="max-width:640px;margin:0 auto;padding:13px 11px"></div>
 </div>
 
@@ -120,8 +113,26 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+// ── Cloudflare Workers経由でAPIを呼ぶ ─────────────────────
+const API_URL = "https://steep-forest-d09e.tani20kobe.workers.dev/";
+
+async function callClaude(system, messages, maxTokens=1000) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: maxTokens,
+      system,
+      messages,
+    }),
+  });
+  const data = await res.json();
+  return data.content?.map(b => b.text || "").join("") || "";
+}
 
 // ── Firebase ──────────────────────────────────────────────
 const firebaseConfig = {
@@ -142,12 +153,12 @@ const ANNUAL_RATE  = 0.10;
 const PAYDAY = 20;
 
 const EXPENSE_TAGS = [
-  {id:"debt",   emoji:"💳",label:"借金返済",         color:"#c0392b",bg:"#fdf0f0",desc:"借金の返済額"},
-  {id:"fixed",  emoji:"🏠",label:"固定費",           color:"#7d3c98",bg:"#f5eeff",desc:"家賃・光熱費・サブスク"},
-  {id:"moving", emoji:"📦",label:"引越し積立",       color:"#1a5276",bg:"#eaf4fb",desc:"9月引越しのための積立"},
+  {id:"debt",   emoji:"💳",label:"借金返済",            color:"#c0392b",bg:"#fdf0f0",desc:"借金の返済額"},
+  {id:"fixed",  emoji:"🏠",label:"固定費",              color:"#7d3c98",bg:"#f5eeff",desc:"家賃・光熱費・サブスク"},
+  {id:"moving", emoji:"📦",label:"引越し積立",          color:"#1a5276",bg:"#eaf4fb",desc:"9月引越しのための積立"},
   {id:"life",   emoji:"⚔️", label:"空手・小説・人生投資",color:"#1e8449",bg:"#eafaf1",desc:"ライフワーク・娯楽"},
-  {id:"daily",  emoji:"🛒",label:"日常運用費",       color:"#ca6f1e",bg:"#fef5ec",desc:"食費・日用品など"},
-  {id:"savings",emoji:"💰",label:"積立費",           color:"#9a7d0a",bg:"#fefde7",desc:"月末残り・余剰積立"},
+  {id:"daily",  emoji:"🛒",label:"日常運用費",          color:"#ca6f1e",bg:"#fef5ec",desc:"食費・日用品など"},
+  {id:"savings",emoji:"💰",label:"積立費",              color:"#9a7d0a",bg:"#fefde7",desc:"月末残り・余剰積立"},
 ];
 const INCOME_TAGS = [
   {id:"salary",  emoji:"💼",label:"給与",      color:"#1a5276",bg:"#eaf4fb",desc:"毎月の給与（手取り）"},
@@ -158,11 +169,11 @@ const ALL_TAGS = [...INCOME_TAGS,...EXPENSE_TAGS];
 const TAG_MAP  = Object.fromEntries(ALL_TAGS.map(t=>[t.id,t]));
 
 const OCR_TYPES = [
-  {id:"paypay", label:"PayPay明細",      hint:"チャージ・送金は自動除外"},
-  {id:"debit",  label:"デビット明細",    hint:"給与入金・ATM・振替は除外"},
-  {id:"credit", label:"クレジット明細",  hint:"固定費・サブスクが中心"},
-  {id:"salary", label:"銀行口座（給与入金）", hint:"給与の入金行だけ抽出、手取り額を収入として記録"},
-  {id:"receipt",label:"レシート",        hint:"現金払いの領収書"},
+  {id:"paypay", label:"PayPay明細",          hint:"チャージ・送金は自動除外"},
+  {id:"debit",  label:"デビット明細",        hint:"給与入金・ATM・振替は除外"},
+  {id:"credit", label:"クレジット明細",      hint:"固定費・サブスクが中心"},
+  {id:"salary", label:"銀行口座（給与入金）",hint:"給与入金行だけ抽出、手取り額を収入として記録"},
+  {id:"receipt",label:"レシート",            hint:"現金払いの領収書"},
 ];
 
 // ── ユーティリティ ────────────────────────────────────────
@@ -171,7 +182,7 @@ const todayStr = () => new Date().toISOString().slice(0,10);
 
 function getCycleKey(dateStr) {
   const d = new Date(dateStr+"T00:00:00");
-  if (d.getDate()>=PAYDAY) {
+  if(d.getDate()>=PAYDAY){
     const next = new Date(d.getFullYear(),d.getMonth()+1,1);
     return `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,"0")}`;
   }
@@ -187,9 +198,9 @@ function getCycleRange(key) {
 }
 
 function getWeeks(key) {
-  const {start,end} = getCycleRange(key);
-  const weeks=[], fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  let s = new Date(start+"T00:00:00");
+  const {start,end}=getCycleRange(key);
+  const weeks=[],fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  let s=new Date(start+"T00:00:00");
   for(let i=0;i<5;i++){
     const e2=new Date(s); e2.setDate(e2.getDate()+6);
     weeks.push({label:`第${i+1}週`,start:fmt(s),end:fmt(e2)});
@@ -200,42 +211,40 @@ function getWeeks(key) {
 }
 
 function calcInterest(principal, payment) {
-  const monthlyRate = ANNUAL_RATE/12;
-  const interestPart   = Math.round(principal*monthlyRate);
-  const principalPart  = Math.max(0, payment-interestPart);
-  return {interestPart, principalPart};
+  const monthlyRate=ANNUAL_RATE/12;
+  const interestPart=Math.round(principal*monthlyRate);
+  const principalPart=Math.max(0,payment-interestPart);
+  return {interestPart,principalPart};
 }
 
 // ── 状態 ──────────────────────────────────────────────────
-let currentUser = null;
-let records=[], debtPaid=0, budgets={};
-let cycleKey = getCycleKey(todayStr());
-let currentTab = "dash";
-let form = {date:todayStr(),tag:"daily",amount:"",memo:"",isIncome:false};
-let ocrType="paypay", ocrImg=null, ocrCands=[];
+let currentUser=null;
+let records=[],debtPaid=0,budgets={};
+let cycleKey=getCycleKey(todayStr());
+let currentTab="dash";
+let form={date:todayStr(),tag:"daily",amount:"",memo:"",isIncome:false};
+let ocrType="paypay",ocrImg=null,ocrCands=[];
 let aiResult="";
 let unsubs=[];
 
 // ── 認証 ──────────────────────────────────────────────────
-document.getElementById("btnLogin").onclick = async () => {
-  try {
-    await signInWithPopup(auth, new GoogleAuthProvider());
-  } catch(e) { showFlash("ログインに失敗しました"); }
+document.getElementById("btnLogin").onclick=async()=>{
+  try { await signInWithPopup(auth,new GoogleAuthProvider()); }
+  catch(e){ showFlash("ログインに失敗しました"); }
 };
 
-document.getElementById("btnLogout").onclick = async () => {
-  unsubs.forEach(u=>u());
-  unsubs=[];
+document.getElementById("btnLogout").onclick=async()=>{
+  unsubs.forEach(u=>u()); unsubs=[];
   records=[]; debtPaid=0; budgets={};
   await signOut(auth);
 };
 
-onAuthStateChanged(auth, user => {
-  currentUser = user;
-  if (user) {
+onAuthStateChanged(auth,user=>{
+  currentUser=user;
+  if(user){
     document.getElementById("loginScreen").classList.remove("show");
     document.getElementById("mainScreen").classList.add("show");
-    const av = document.getElementById("userAvatar");
+    const av=document.getElementById("userAvatar");
     if(user.photoURL){ av.src=user.photoURL; av.style.display="block"; }
     startSync(user.uid);
     initCycleInput();
@@ -246,51 +255,43 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-// ── Firebaseリアルタイム同期 ──────────────────────────────
-function setSyncStatus(s) {
-  const el = document.getElementById("syncStatus");
-  if(!el) return;
-  el.className = "sync-dot "+(s==="ok"?"ok":s==="syncing"?"syncing":"err");
-  el.textContent = s==="ok"?"● 同期済":s==="syncing"?"● 同期中...":"● オフライン";
+// ── Firebase同期 ──────────────────────────────────────────
+function setSyncStatus(s){
+  const el=document.getElementById("syncStatus"); if(!el) return;
+  el.className="sync-dot "+(s==="ok"?"ok":s==="syncing"?"syncing":"err");
+  el.textContent=s==="ok"?"● 同期済":s==="syncing"?"● 同期中...":"● オフライン";
 }
 
-function startSync(uid) {
+function startSync(uid){
   unsubs.forEach(u=>u()); unsubs=[];
-
-  const u1 = onSnapshot(collection(db,`users/${uid}/records`), snap=>{
-    records = snap.docs.map(d=>({id:d.id,...d.data()}));
+  const u1=onSnapshot(collection(db,`users/${uid}/records`),snap=>{
+    records=snap.docs.map(d=>({id:d.id,...d.data()}));
     setSyncStatus("ok"); render();
-  }, ()=>setSyncStatus("err"));
-
-  const u2 = onSnapshot(doc(db,`users/${uid}/meta/data`), snap=>{
-    if(snap.exists()){
-      const d=snap.data();
-      debtPaid = d.debtPaid||0;
-      budgets  = d.budgets||{};
-    }
+  },()=>setSyncStatus("err"));
+  const u2=onSnapshot(doc(db,`users/${uid}/meta/data`),snap=>{
+    if(snap.exists()){ const d=snap.data(); debtPaid=d.debtPaid||0; budgets=d.budgets||{}; }
     render();
   });
-
   unsubs=[u1,u2];
 }
 
-async function saveMeta() {
+async function saveMeta(){
   if(!currentUser) return;
   setSyncStatus("syncing");
   await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{debtPaid,budgets});
   setSyncStatus("ok");
 }
 
-async function addRecord(rec) {
+async function addRecord(rec){
   if(!currentUser) return;
   setSyncStatus("syncing");
-  const id = Date.now()+"-"+Math.random().toString(36).slice(2);
+  const id=Date.now()+"-"+Math.random().toString(36).slice(2);
   await setDoc(doc(db,`users/${currentUser.uid}/records`,id),{...rec,id});
   if(rec.tag==="debt"){ debtPaid+=rec.amount; await saveMeta(); }
   setSyncStatus("ok");
 }
 
-async function deleteRecord(rec) {
+async function deleteRecord(rec){
   if(!currentUser) return;
   setSyncStatus("syncing");
   await deleteDoc(doc(db,`users/${currentUser.uid}/records`,rec.id));
@@ -300,29 +301,26 @@ async function deleteRecord(rec) {
 
 // ── フラッシュ ────────────────────────────────────────────
 let flashTimer;
-function showFlash(msg) {
+function showFlash(msg){
   const el=document.getElementById("flash");
   el.textContent=msg; el.classList.add("show");
   clearTimeout(flashTimer);
   flashTimer=setTimeout(()=>el.classList.remove("show"),2200);
 }
 
-// ── サイクル ──────────────────────────────────────────────
-function initCycleInput() {
-  const inp=document.getElementById("cycleInput");
-  if(!inp) return;
+function initCycleInput(){
+  const inp=document.getElementById("cycleInput"); if(!inp) return;
   inp.value=cycleKey;
   inp.onchange=e=>{ cycleKey=e.target.value; updateCycleRange(); render(); };
   updateCycleRange();
 }
 
-function updateCycleRange() {
+function updateCycleRange(){
   const el=document.getElementById("cycleRange"); if(!el) return;
   const {start,end}=getCycleRange(cycleKey);
   el.textContent=`${start} 〜 ${end}`;
 }
 
-// ── タブ ──────────────────────────────────────────────────
 document.querySelectorAll(".tab").forEach(btn=>{
   btn.onclick=()=>{
     document.querySelectorAll(".tab").forEach(b=>b.classList.remove("on"));
@@ -332,14 +330,14 @@ document.querySelectorAll(".tab").forEach(btn=>{
   };
 });
 
-// ── メインレンダー ────────────────────────────────────────
-function render() {
+// ── レンダー ──────────────────────────────────────────────
+function render(){
   if(!currentUser) return;
   const app=document.getElementById("app"); if(!app) return;
   const {start,end}=getCycleRange(cycleKey);
   const weeks=getWeeks(cycleKey);
   const cycleRecs=records.filter(r=>r.date>=start&&r.date<=end).sort((a,b)=>b.date.localeCompare(a.date));
-  const cycleIncome =cycleRecs.filter(r=>r.isIncome).reduce((s,r)=>s+r.amount,0);
+  const cycleIncome=cycleRecs.filter(r=>r.isIncome).reduce((s,r)=>s+r.amount,0);
   const cycleExpense=cycleRecs.filter(r=>!r.isIncome).reduce((s,r)=>s+r.amount,0);
   const cycleBalance=cycleIncome-cycleExpense;
   const debtRemaining=INITIAL_DEBT-debtPaid;
@@ -358,7 +356,6 @@ function render() {
   if(avgPay>debtRemaining*monthlyRate&&avgPay>0)
     completionMonths=Math.ceil(Math.log(1-(debtRemaining*monthlyRate)/avgPay)/Math.log(1+monthlyRate)*-1);
 
-  // ── DASH ──
   if(currentTab==="dash"){
     app.innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:11px">
@@ -400,7 +397,6 @@ function render() {
       </div>`;
   }
 
-  // ── BUDGET ──
   else if(currentTab==="budget"){
     app.innerHTML=`
       ${budgetOverIncome?`<div class="warn" style="margin-bottom:10px">⚠️ 週次予算の合計 ${yen(totalBudget)} が収入 ${yen(cycleIncome)} を超えています！</div>`:""}
@@ -438,7 +434,6 @@ function render() {
     },0);
   }
 
-  // ── INPUT ──
   else if(currentTab==="input"){
     const tags=form.isIncome?INCOME_TAGS:EXPENSE_TAGS;
     app.innerHTML=`
@@ -490,30 +485,36 @@ function render() {
     },0);
   }
 
-  // ── OCR ──
   else if(currentTab==="ocr"){
     app.innerHTML=`
       <div style="display:flex;flex-direction:column;gap:11px">
         <div class="card" style="padding:16px">
           <div class="section-title">📷 明細読込</div>
-          <div class="lbl">明細の種類</div>
-          <div class="tag-grid" style="margin-bottom:10px">
+          <div class="lbl" style="margin-bottom:6px">① 明細の種類を選ぶ</div>
+          <div class="tag-grid" style="margin-bottom:14px">
             ${OCR_TYPES.map(t=>`
               <button class="tag-btn ocr-type-btn" data-ocr="${t.id}" style="border:2px solid ${ocrType===t.id?"var(--gold)":"var(--border)"};background:${ocrType===t.id?"#fefde7":"#fff"}">
                 <div style="font-size:.77rem;font-weight:${ocrType===t.id?600:400};color:${ocrType===t.id?"var(--gold)":"var(--ink)"}">${t.label}</div>
                 <div style="font-size:.6rem;color:#9a8e82;margin-top:2px">${t.hint}</div>
               </button>`).join("")}
           </div>
+          <div class="lbl" style="margin-bottom:6px">② 画像をタップして選択</div>
           <div class="ocr-drop" id="ocrDrop">
-            ${ocrImg?`<img src="${ocrImg}" style="max-width:100%;max-height:200px;object-fit:contain;border-radius:6px"/>`:`<div><div style="font-size:1.8rem;margin-bottom:6px">📂</div><div style="font-size:.8rem;color:#8a7e72">タップして画像を選択</div></div>`}
+            ${ocrImg?`<img src="${ocrImg}" style="max-width:100%;max-height:200px;object-fit:contain;border-radius:6px"/>`:`
+            <div>
+              <div style="font-size:2rem;margin-bottom:8px">📂</div>
+              <div style="font-size:.82rem;color:#8a7e72;font-weight:600">ここをタップして画像を選択</div>
+              <div style="font-size:.68rem;color:#aaa;margin-top:4px">スクショ・レシート写真など</div>
+            </div>`}
           </div>
           <input type="file" id="ocrFile" accept="image/*" style="display:none"/>
-          <div id="ocrLoading" style="display:none;text-align:center;padding:14px;font-size:.8rem;color:var(--gold)">🔍 AIが読み取り中...</div>
+          <div id="ocrLoading" style="display:none;text-align:center;padding:16px;font-size:.82rem;color:var(--gold)">🔍 AIが明細を読み取り中...<br><span style="font-size:.68rem;color:#aaa">少し時間がかかります</span></div>
           <div id="ocrErr" style="color:var(--red);font-size:.75rem;margin-top:7px"></div>
         </div>
         ${ocrCands.length>0?`
         <div class="card" style="padding:14px">
-          <div style="font-size:.83rem;font-weight:600;margin-bottom:9px">読取結果 — 追加する項目を確認</div>
+          <div style="font-size:.83rem;font-weight:600;margin-bottom:4px">③ 読取結果を確認して追加</div>
+          <div style="font-size:.7rem;color:#9a8e82;margin-bottom:10px">チェックを外すと除外できます。タグも変更可能です。</div>
           ${ocrCands.map((c,i)=>{
             const t=TAG_MAP[c.suggestedTag]||TAG_MAP["daily"];
             return `<div style="display:flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;margin-bottom:5px;background:#fff;font-size:.76rem">
@@ -529,7 +530,7 @@ function render() {
           }).join("")}
           <div style="margin-top:10px;display:flex;gap:7px;justify-content:flex-end">
             <button id="ocrCancel" style="background:none;border:1px solid var(--border);border-radius:6px;padding:7px 14px;font-family:inherit;font-size:.78rem;cursor:pointer;color:#8a7e72">キャンセル</button>
-            <button class="pbtn" id="ocrCommit">選択した ${ocrCands.filter(c=>c._sel).length}件 を追加</button>
+            <button class="pbtn" id="ocrCommit">✓ 選択した ${ocrCands.filter(c=>c._sel).length}件 を追加</button>
           </div>
         </div>`:""}
       </div>`;
@@ -551,7 +552,6 @@ function render() {
     },0);
   }
 
-  // ── LIST ──
   else if(currentTab==="list"){
     app.innerHTML=`
       <div class="card" style="overflow:hidden">
@@ -579,7 +579,6 @@ function render() {
     },0);
   }
 
-  // ── AI ──
   else if(currentTab==="ai"){
     app.innerHTML=`
       <div class="card" style="padding:17px;display:flex;flex-direction:column;gap:12px">
@@ -597,24 +596,29 @@ function render() {
         document.getElementById("btnAI").textContent="分析中...";
         const tagSum=EXPENSE_TAGS.map(t=>`  ${t.label}: ${yen(byTag[t.id])}`).join("\n");
         const weekSum=weeks.map((w,i)=>`  ${w.label}: 予算${yen(cycleBudget[`w${i}`]||0)} / 実績${yen(weekActuals[i])}`).join("\n");
-        const prompt=`給与月: ${cycleKey}（${start}〜${end}）\n収入: ${yen(cycleIncome)} / 支出: ${yen(cycleExpense)} / 収支: ${yen(cycleBalance)}\n借金残高: ${yen(debtRemaining)}（年利10%）\n今月の利息負担: ${yen(interestPart)} / 元本返済: ${yen(principalPart)}\n${completionMonths?`完済予測: あと約${completionMonths}ヶ月`:""}\n\nタグ別支出:\n${tagSum}\n週次予算vs実績:\n${weekSum}\n\n①収支の総評、②借金返済ペースと利息負担への評価、③週次予算の達成状況、④改善アドバイス3点`;
+        const prompt=`給与月: ${cycleKey}（${start}〜${end}）\n収入: ${yen(cycleIncome)} / 支出: ${yen(cycleExpense)} / 収支: ${yen(cycleBalance)}\n借金残高: ${yen(debtRemaining)}（年利10%）\n今月の利息: ${yen(interestPart)} / 元本返済: ${yen(principalPart)}\n${completionMonths?`完済予測: あと約${completionMonths}ヶ月`:""}\n\nタグ別支出:\n${tagSum}\n週次予算vs実績:\n${weekSum}\n\n①収支の総評、②借金返済ペースと利息負担の評価、③週次予算の達成状況、④改善アドバイス3点`;
         try {
-          const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"家計管理の専門家として、借金返済中のユーザーに率直で建設的なアドバイスをしてください。",messages:[{role:"user",content:prompt}]})});
-          const data=await res.json();
-          aiResult=data.content?.map(b=>b.text||"").join("")||"分析失敗";
+          aiResult = await callClaude("家計管理の専門家として、借金返済中のユーザーに率直で建設的なアドバイスをしてください。",[{role:"user",content:prompt}]);
         } catch { aiResult="エラーが発生しました。"; }
         render();
       };
     },0);
   }
 
-  // ── GUIDE ──
   else if(currentTab==="guide"){
     app.innerHTML=`
       <div class="card" style="padding:17px;display:flex;flex-direction:column;gap:16px">
         <div>
           <div class="section-title">📅 給与サイクルのルール</div>
           <p style="font-size:.78rem;line-height:1.8;color:#4a4035">給与日は毎月<strong>20日</strong>。「4月分」は<strong>3月20日〜4月19日</strong>として管理します。</p>
+        </div>
+        <div>
+          <div class="section-title">📷 明細読込の手順</div>
+          <div style="font-size:.78rem;line-height:2;color:#4a4035">
+            <div style="margin-bottom:8px"><strong>① 明細の種類を選ぶ</strong><br>PayPay・デビット・クレカ・給与入金・レシートから選択</div>
+            <div style="margin-bottom:8px"><strong>② 画像をタップして選択</strong><br>アプリのスクショや写真を選ぶ</div>
+            <div><strong>③ 読取結果を確認して追加</strong><br>不要な行はチェックを外す。タグが違う場合は変更して「追加」</div>
+          </div>
         </div>
         <div>
           <div class="section-title">💳 支払い手段別の入力ルール</div>
@@ -654,7 +658,7 @@ function render() {
 }
 
 // ── OCR処理 ──────────────────────────────────────────────
-async function handleOCR(e) {
+async function handleOCR(e){
   const file=e.target.files?.[0]; if(!file) return;
   ocrCands=[]; document.getElementById("ocrErr").textContent="";
   const reader=new FileReader();
@@ -662,23 +666,18 @@ async function handleOCR(e) {
     const b64=ev.target.result.split(",")[1];
     ocrImg=ev.target.result;
     document.getElementById("ocrLoading").style.display="block";
+    const isSalary=ocrType==="salary";
     const typeInfo=OCR_TYPES.find(t=>t.id===ocrType);
-
-    // 給与入金専用のプロンプト
-    const isSalary = ocrType==="salary";
-    const systemPrompt = isSalary
-      ? `あなたは家計簿AIです。銀行口座の明細画像から「給与」「給与振込」「賞与」などの収入入金だけを抽出しJSON配列のみを返してください。ATM・振替・引き落とし・チャージは除外。フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"給与 [会社名など]","suggestedTag":"salary","isIncome":true}] 日付不明は${todayStr()}。金額は円の整数。`
-      : `あなたは家計簿AIです。${typeInfo.label}の画像から実際の「支払い取引」だけを抽出しJSON配列のみを返してください。説明文・コードブロック不要。除外:PayPayはチャージ・送金・受取、デビットは給与入金・ATM・振替、クレカは繰越・ポイント・合計行。フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"debt|fixed|moving|life|daily|savings|salary|side|other_in","isIncome":false}] 日付不明は${todayStr()}。金額は円の整数。`;
-
+    const system=isSalary
+      ?`あなたは家計簿AIです。銀行口座の明細画像から「給与」「給与振込」「賞与」などの収入入金だけを抽出しJSON配列のみを返してください。ATM・振替・引き落とし・チャージは除外。フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"給与","suggestedTag":"salary","isIncome":true}] 日付不明は${todayStr()}。金額は円の整数。`
+      :`あなたは家計簿AIです。${typeInfo.label}の画像から実際の「支払い取引」だけを抽出しJSON配列のみを返してください。説明文・コードブロック不要。除外:PayPayはチャージ・送金・受取、デビットは給与入金・ATM・振替、クレカは繰越・ポイント・合計行。フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"debt|fixed|moving|life|daily|savings|salary|side|other_in","isIncome":false}] 日付不明は${todayStr()}。金額は円の整数。`;
     try {
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-        model:"claude-sonnet-4-20250514",max_tokens:1000,system:systemPrompt,
-        messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:file.type||"image/jpeg",data:b64}},{type:"text",text:`この${typeInfo.label}から取引を全て抽出してJSON配列で返してください。`}]}]
-      })});
-      const data=await res.json();
-      const raw=data.content?.map(b=>b.text||"").join("")||"";
-      ocrCands=JSON.parse(raw.replace(/```json|```/g,"").trim()).map((c,i)=>({...c,_key:i,_sel:true}));
-    } catch { document.getElementById("ocrErr").textContent="読み取り失敗。別の画像を試してください。"; }
+      const text = await callClaude(system,[{role:"user",content:[
+        {type:"image",source:{type:"base64",media_type:file.type||"image/jpeg",data:b64}},
+        {type:"text",text:`この${typeInfo.label}から取引を全て抽出してJSON配列で返してください。`}
+      ]}]);
+      ocrCands=JSON.parse(text.replace(/```json|```/g,"").trim()).map((c,i)=>({...c,_key:i,_sel:true}));
+    } catch { document.getElementById("ocrErr").textContent="読み取りに失敗しました。画像が鮮明か確認して再試行してください。"; }
     document.getElementById("ocrLoading").style.display="none";
     render();
   };
