@@ -188,8 +188,11 @@ const PAYDAY = 20;
 // ── 負債定義（複数管理・ハードコード廃止） ─────────────────
 // デフォルト値。設定画面で上書き可能（Firebase保存）
 const DEFAULT_DEBTS = [
-  {id:"smbc",    label:"SMBC借金",       balance:1483926, rate:0.12, monthlyPay:20000,  color:"#c0392b"},
-  {id:"rakuten", label:"楽天分割残",     balance:49808,   rate:0,    monthlyPay:6226,   color:"#e67e22"},
+  {id:"smbc",    label:"SMBC借金",             balance:1483926, rate:0.12, monthlyPay:20000, color:"#c0392b"},
+  {id:"rakuten", label:"楽天分割残",           balance:49808,   rate:0,    monthlyPay:6226,  color:"#e67e22"},
+  {id:"card_rakuten", label:"楽天カード翌月払", balance:133076,  rate:0,    monthlyPay:0,     color:"#f39c12"},
+  {id:"card_olive",   label:"SMBC Olive翌月払", balance:21782,   rate:0,    monthlyPay:0,     color:"#7d3c98"},
+  {id:"card_amazon",  label:"Amazon翌月払",     balance:16610,   rate:0,    monthlyPay:0,     color:"#1a5276"},
 ];
 const DEFAULT_ACCOUNTS = [
   {id:"smbc_acc",  label:"SMBC",   balance:99691},
@@ -300,8 +303,10 @@ function calcNetWorth() {
   const smbcRemaining = getSMBCRemaining();
   const rakutenDebt = debts.find(d=>d.id==="rakuten");
   const rakutenRemaining = rakutenDebt ? rakutenDebt.balance : 49808;
-  const totalDebt = smbcRemaining + rakutenRemaining;
-  return {totalAssets, totalDebt, netWorth: totalAssets - totalDebt, smbcRemaining, rakutenRemaining};
+  // クレカ翌月払い残高（card_で始まるもの）
+  const cardDebt = debts.filter(d=>d.id.startsWith("card_")).reduce((s,d)=>s+d.balance, 0);
+  const totalDebt = smbcRemaining + rakutenRemaining + cardDebt;
+  return {totalAssets, totalDebt, netWorth: totalAssets - totalDebt, smbcRemaining, rakutenRemaining, cardDebt};
 }
 
 let currentUser=null, records=[], debtPrincipalPaid=0, budgets={};
@@ -636,9 +641,10 @@ function render(){
             <div style="font-size:1.5rem;font-weight:700;color:${nw.netWorth>=0?"var(--green)":"var(--red)"}">${nw.netWorth<0?"▲":""}${yen(Math.abs(nw.netWorth))}</div>
             ${nw.netWorth<0?`<div style="font-size:.65rem;color:#9a8e82;margin-top:1px">債務超過</div>`:""}
           </div>
-          <div style="text-align:right;font-size:.7rem;color:#9a8e82;line-height:1.9">
-            <div>SMBC: ${yen(nw.smbcRemaining)}</div>
-            <div>楽天分割残: ${yen(nw.rakutenRemaining)}（残${rakutenMonthsLeft}回）</div>
+          <div style="text-align:right;font-size:.68rem;color:#9a8e82;line-height:2">
+            <div>SMBC: <span style="color:var(--red);font-weight:600">${yen(nw.smbcRemaining)}</span></div>
+            <div>楽天分割残: <span style="color:#e67e22;font-weight:600">${yen(nw.rakutenRemaining)}</span>（残${rakutenMonthsLeft}回）</div>
+            <div>クレカ翌月払: <span style="color:#854F0B;font-weight:600">${yen(nw.cardDebt)}</span></div>
           </div>
         </div>
       </div>
@@ -1016,9 +1022,11 @@ function render(){
         <hr style="border:none;border-top:1px solid var(--cream)"/>
         <div>
           <div class="section-title">💳 負債残高の設定</div>
-          <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">各借金の現在残高・利率・月返済額を設定してください。</p>
-          ${debts.map((d,i)=>`
-            <div style="background:var(--cream);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+          <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">各借金・クレカ翌月払いの現在残高を設定してください。</p>
+          <div style="font-size:.7rem;font-weight:600;color:#8a7e72;margin:0 0 6px">— 借金（利率あり）—</div>
+          ${debts.filter(d=>!d.id.startsWith("card_")).map((d,_i)=>{
+            const i=debts.findIndex(x=>x.id===d.id);
+            return `<div style="background:var(--cream);border-radius:8px;padding:10px 12px;margin-bottom:8px">
               <div style="font-size:.8rem;font-weight:600;color:${d.color||"var(--red)"};margin-bottom:8px">${d.label}</div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
                 <div>
@@ -1034,8 +1042,18 @@ function render(){
                   <input type="number" class="debt-pay-input" data-i="${i}" value="${d.monthlyPay}" min="0"/>
                 </div>
               </div>
-            </div>`).join("")}
-          <button class="pbtn" id="btnSaveDebts" style="width:100%">負債情報を保存</button>
+            </div>`;
+          }).join("")}
+          <div style="font-size:.7rem;font-weight:600;color:#8a7e72;margin:10px 0 6px">— クレカ翌月払い（月次で更新）—</div>
+          ${debts.filter(d=>d.id.startsWith("card_")).map((d,_i)=>{
+            const i=debts.findIndex(x=>x.id===d.id);
+            return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+              <span style="font-size:.78rem;min-width:130px;color:${d.color||"var(--ink)"}">${d.label}</span>
+              <input type="number" class="debt-bal-input" data-i="${i}" value="${d.balance}" min="0" style="flex:1"/>
+              <span style="font-size:.72rem;color:#9a8e82">円</span>
+            </div>`;
+          }).join("")}
+          <button class="pbtn" id="btnSaveDebts" style="width:100%;margin-top:6px">負債情報を保存</button>
         </div>
         <hr style="border:none;border-top:1px solid var(--cream)"/>
         <div>
@@ -1048,12 +1066,16 @@ function render(){
             <div class="card" style="padding:10px;text-align:center">
               <div class="lbl" style="text-align:center">総負債</div>
               <div style="font-weight:700;color:var(--red)">${yen(nw.totalDebt)}</div>
+              <div style="font-size:.63rem;color:#9a8e82;margin-top:2px">借金+分割+クレカ翌月払</div>
             </div>
           </div>
           <div class="card" style="padding:10px;text-align:center;margin-top:7px;border-left:4px solid ${nw.netWorth>=0?"var(--green)":"var(--red)"}">
             <div class="lbl" style="text-align:center">純資産</div>
-            <div style="font-size:1.3rem;font-weight:700;color:${nw.netWorth>=0?"var(--green)":"var(--red)"}">${nw.netWorth>=0?"":""} ${yen(nw.netWorth)}</div>
+            <div style="font-size:1.3rem;font-weight:700;color:${nw.netWorth>=0?"var(--green)":"var(--red)"}">${nw.netWorth<0?"▲":""}${yen(Math.abs(nw.netWorth))}</div>
             ${nw.netWorth<0?`<div style="font-size:.65rem;color:#9a8e82;margin-top:3px">債務超過</div>`:""}
+          </div>
+          <div style="font-size:.68rem;color:#9a8e82;margin-top:8px;line-height:1.9;padding:8px 10px;background:var(--cream);border-radius:6px">
+            内訳: SMBC ${yen(nw.smbcRemaining)} ／ 楽天分割 ${yen(nw.rakutenRemaining)} ／ クレカ翌月払 ${yen(nw.cardDebt)}
           </div>
         </div>
       </div>`;
