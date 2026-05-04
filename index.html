@@ -290,11 +290,27 @@ function calcInterest(currentPrincipal, paymentAmount, annualRate) {
   return {interestPart, principalPart};
 }
 
-// SMBC借金残高を動的に計算（debts[0].balanceを初期値として使用）
+// SMBC残高はスナップショット方式（実測値ベース）
+// smbcSnapshots: [{month:"2025-05", balance:1483926, note:"", savedAt:"..."}]
 function getSMBCRemaining() {
-  const smbcDebt = debts.find(d=>d.id==="smbc");
-  const initialBalance = smbcDebt ? smbcDebt.balance : 1483926;
-  return Math.max(0, initialBalance - debtPrincipalPaid);
+  if(smbcSnapshots.length===0){
+    const smbcDebt=debts.find(d=>d.id==="smbc");
+    return smbcDebt ? smbcDebt.balance : 1483926;
+  }
+  // 最新スナップショットの残高を返す
+  return smbcSnapshots[smbcSnapshots.length-1].balance;
+}
+
+// 前月スナップショットとの差分から利息・元本を計算
+function calcMonthlyDebtSummary() {
+  if(smbcSnapshots.length<2) return null;
+  const prev=smbcSnapshots[smbcSnapshots.length-2];
+  const curr=smbcSnapshots[smbcSnapshots.length-1];
+  const smbcDebt=debts.find(d=>d.id==="smbc")||{rate:0.12};
+  const interest=Math.round(prev.balance*(smbcDebt.rate/12));
+  const principalReduced=prev.balance-curr.balance;
+  const totalPaid=principalReduced+interest;
+  return {prev, curr, interest, principalReduced, totalPaid};
 }
 
 // 総資産・総負債の計算
@@ -303,13 +319,13 @@ function calcNetWorth() {
   const smbcRemaining = getSMBCRemaining();
   const rakutenDebt = debts.find(d=>d.id==="rakuten");
   const rakutenRemaining = rakutenDebt ? rakutenDebt.balance : 49808;
-  // クレカ翌月払い残高（card_で始まるもの）
   const cardDebt = debts.filter(d=>d.id.startsWith("card_")).reduce((s,d)=>s+d.balance, 0);
   const totalDebt = smbcRemaining + rakutenRemaining + cardDebt;
   return {totalAssets, totalDebt, netWorth: totalAssets - totalDebt, smbcRemaining, rakutenRemaining, cardDebt};
 }
 
-let currentUser=null, records=[], debtPrincipalPaid=0, budgets={};
+let currentUser=null, records=[], budgets={};
+let smbcSnapshots=[];  // [{month, balance, note, savedAt}]
 let debts=[...DEFAULT_DEBTS.map(d=>({...d}))];
 let accounts=[...DEFAULT_ACCOUNTS.map(a=>({...a}))];
 let cycleKey=getCycleKey(todayStr()), currentTab="dash";
@@ -322,7 +338,7 @@ document.getElementById("btnLogin").onclick=async()=>{
 };
 document.getElementById("btnLogout").onclick=async()=>{
   unsubs.forEach(u=>u()); unsubs=[];
-  records=[]; debtPrincipalPaid=0; budgets={};
+  records=[]; smbcSnapshots=[]; budgets={};
   await signOut(auth);
 };
 
@@ -354,10 +370,17 @@ function startSync(uid){
   const u2=onSnapshot(doc(db,`users/${uid}/meta/data`),snap=>{
     if(snap.exists()){
       const d=snap.data();
-      debtPrincipalPaid=d.debtPrincipalPaid??d.debtPaid??0;
       budgets=d.budgets||{};
       if(d.debts) debts=d.debts;
       if(d.accounts) accounts=d.accounts;
+      if(d.smbcSnapshots) smbcSnapshots=d.smbcSnapshots;
+      // 後方互換: 旧debtPrincipalPaidが存在してスナップショットが空の場合
+      if(!d.smbcSnapshots && d.debtPrincipalPaid){
+        const smbcDebt=debts.find(x=>x.id==="smbc");
+        const initBal=smbcDebt?smbcDebt.balance:1483926;
+        const remaining=Math.max(0,initBal-d.debtPrincipalPaid);
+        smbcSnapshots=[{month:getCycleKey(todayStr()),balance:remaining,note:"旧データから移行",savedAt:new Date().toISOString()}];
+      }
     }
     render();
   });
@@ -366,7 +389,7 @@ function startSync(uid){
 async function saveMeta(){
   if(!currentUser) return;
   setSyncStatus("syncing");
-  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{debtPrincipalPaid,budgets,debts,accounts});
+  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{budgets,debts,accounts,smbcSnapshots});
   setSyncStatus("ok");
 }
 async function addRecord(rec){
@@ -374,25 +397,7 @@ async function addRecord(rec){
   setSyncStatus("syncing");
   const id=Date.now()+"-"+Math.random().toString(36).slice(2);
   let enriched={...rec,id};
-  const smbcDebt = debts.find(d=>d.id==="smbc");
-  const smbcRate = smbcDebt ? smbcDebt.rate : 0.12;
-  if(rec.tag==="debt"){
-    const currentPrincipal=getSMBCRemaining();
-    const {interestPart,principalPart}=calcInterest(currentPrincipal,rec.amount,smbcRate);
-    enriched.interestPart=interestPart;
-    enriched.principalPart=principalPart;
-    await setDoc(doc(db,`users/${currentUser.uid}/records`,id),enriched);
-    debtPrincipalPaid+=principalPart;
-    await saveMeta();
-  } else if(rec.tag==="prepay"){
-    // 繰上返済：全額元本返済として処理
-    enriched.interestPart=0;
-    enriched.principalPart=rec.amount;
-    await setDoc(doc(db,`users/${currentUser.uid}/records`,id),enriched);
-    debtPrincipalPaid+=rec.amount;
-    await saveMeta();
-  } else if(rec.tag==="rakuten_pay"){
-    // 楽天分割：debtsのrakuten残高を減らす
+  if(rec.tag==="rakuten_pay"){
     const rakIdx=debts.findIndex(d=>d.id==="rakuten");
     if(rakIdx>=0){
       debts[rakIdx].balance=Math.max(0,debts[rakIdx].balance-rec.amount);
@@ -408,11 +413,7 @@ async function deleteRecord(rec){
   if(!currentUser) return;
   setSyncStatus("syncing");
   await deleteDoc(doc(db,`users/${currentUser.uid}/records`,rec.id));
-  if(rec.tag==="debt"||rec.tag==="prepay"){
-    const principal=rec.principalPart??rec.amount;
-    debtPrincipalPaid=Math.max(0,debtPrincipalPaid-principal);
-    await saveMeta();
-  } else if(rec.tag==="rakuten_pay"){
+  if(rec.tag==="rakuten_pay"){
     const rakIdx=debts.findIndex(d=>d.id==="rakuten");
     if(rakIdx>=0) debts[rakIdx].balance+=rec.amount;
     await saveMeta();
@@ -594,23 +595,28 @@ function render(){
   const cycleBalance=cycleIncome-cycleExpense;
   const debtRemaining=getSMBCRemaining();
   const smbcDebt=debts.find(d=>d.id==="smbc")||DEFAULT_DEBTS[0];
-  const initialSMBC=smbcDebt.balance;
-  const debtPct=Math.min(100,(debtPrincipalPaid/initialSMBC)*100);
+  // スナップショット方式：初期残高はスナップショットがなければsmbcDebt.balance
+  const initialSMBC=smbcSnapshots.length>0
+    ? Math.max(...smbcSnapshots.map(s=>s.balance))
+    : smbcDebt.balance;
+  const debtPct=initialSMBC>0?Math.min(100,((initialSMBC-debtRemaining)/initialSMBC)*100):0;
   const byTag=Object.fromEntries(ALL_TAGS.map(t=>[t.id,cycleRecs.filter(r=>r.tag===t.id).reduce((s,r)=>s+r.amount,0)]));
   const weekActuals=weeks.map(w=>cycleRecs.filter(r=>!r.isIncome&&r.date>=w.start&&r.date<=w.end).reduce((s,r)=>s+r.amount,0));
   const cycleBudget=budgets[cycleKey]||{};
   const totalBudget=weeks.reduce((s,_,i)=>s+(cycleBudget[`w${i}`]||0),0);
   const budgetOverIncome=cycleIncome>0&&totalBudget>cycleIncome;
   const monthlyRate=smbcDebt.rate/12;
-  const debtRecs=cycleRecs.filter(r=>r.tag==="debt"||r.tag==="prepay");
-  const monthDebtPayment=debtRecs.reduce((s,r)=>s+r.amount,0);
-  const monthInterestTotal=debtRecs.reduce((s,r)=>s+(r.interestPart||0),0);
-  const monthPrincipalTotal=debtRecs.reduce((s,r)=>s+(r.principalPart??r.amount),0);
-  const allDebtRecs=records.filter(r=>r.tag==="debt"||r.tag==="prepay");
-  const avgPrincipalPay=allDebtRecs.length>0?allDebtRecs.reduce((s,r)=>s+(r.principalPart??r.amount),0)/Math.max(1,new Set(allDebtRecs.map(r=>r.date.slice(0,7))).size):0;
+  // 月次サマリー：スナップショット差分から計算
+  const monthSummary=calcMonthlyDebtSummary();
+  // 完済予測：スナップショットが2件以上あれば月次減少ペースから計算
   let completionMonths=null;
-  if(avgPrincipalPay>debtRemaining*monthlyRate&&avgPrincipalPay>0)
-    completionMonths=Math.ceil(Math.log(1-(debtRemaining*monthlyRate)/avgPrincipalPay)/Math.log(1+monthlyRate)*-1);
+  if(smbcSnapshots.length>=2){
+    const last=smbcSnapshots[smbcSnapshots.length-1];
+    const prev=smbcSnapshots[smbcSnapshots.length-2];
+    const monthlyReduction=prev.balance-last.balance;
+    if(monthlyReduction>0&&last.balance>0)
+      completionMonths=Math.ceil(last.balance/monthlyReduction);
+  }
 
   if(currentTab==="dash"){
     const nw=calcNetWorth();
@@ -668,24 +674,28 @@ function render(){
         </div>
       </div>
       <div class="card" style="padding:16px;margin-bottom:11px;border-left:4px solid var(--red)">
-        <div class="lbl">💳 SMBC借金残高（元本）</div>
+        <div class="lbl">💳 SMBC借金残高（実測値）</div>
         <div style="font-size:1.7rem;font-weight:700;color:var(--red);margin-bottom:2px">${yen(debtRemaining)}</div>
-        <div style="font-size:.66rem;color:#9a8e82;margin-bottom:10px">元本返済済 ${yen(debtPrincipalPaid)} / 初期元本 ${yen(initialSMBC)}</div>
+        <div style="font-size:.66rem;color:#9a8e82;margin-bottom:10px">
+          ${smbcSnapshots.length>0
+            ?`最終更新: ${smbcSnapshots[smbcSnapshots.length-1].month} — 初期残高比 ${yen(initialSMBC)} から ${yen(initialSMBC-debtRemaining)} 減`
+            :`⚙️設定タブで残高を記録してください`}
+        </div>
         <div class="bar-track"><div class="bar-fill" style="width:${debtPct}%;background:var(--red)"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:.64rem;color:#9a8e82;margin-top:3px">
-          <span>元本返済率 ${debtPct.toFixed(1)}%</span>
-          <span>${completionMonths?`あと約${completionMonths}ヶ月で完済予測`:"返済記録を追加すると完済予測が出ます"}</span>
+          <span>返済進捗 ${debtPct.toFixed(1)}%</span>
+          <span>${completionMonths?`あと約${completionMonths}ヶ月で完済予測`:"残高を2ヶ月分記録すると予測が出ます"}</span>
         </div>
-        ${monthDebtPayment>0?`
+        ${monthSummary?`
         <div class="interest-box" style="margin-top:12px">
-          <div style="font-weight:600;margin-bottom:6px">今月の返済内訳（年利${(smbcDebt.rate*100).toFixed(0)}%）</div>
+          <div style="font-weight:600;margin-bottom:6px">前月比の返済内訳（年利${(smbcDebt.rate*100).toFixed(0)}%）</div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
-            <div><div class="lbl" style="text-align:center">返済合計</div><div style="font-weight:700">${yen(monthDebtPayment)}</div></div>
-            <div><div class="lbl" style="text-align:center">うち利息</div><div style="font-weight:700;color:var(--red)">${yen(monthInterestTotal)}</div></div>
-            <div><div class="lbl" style="text-align:center">元本減少</div><div style="font-weight:700;color:var(--green)">${yen(monthPrincipalTotal)}</div></div>
+            <div><div class="lbl" style="text-align:center">残高減少</div><div style="font-weight:700">${yen(monthSummary.principalReduced)}</div></div>
+            <div><div class="lbl" style="text-align:center">うち利息(推計)</div><div style="font-weight:700;color:var(--red)">${yen(monthSummary.interest)}</div></div>
+            <div><div class="lbl" style="text-align:center">元本返済(推計)</div><div style="font-weight:700;color:var(--green)">${yen(monthSummary.principalReduced-monthSummary.interest)}</div></div>
           </div>
-          <div style="font-size:.68rem;color:#7a6050;margin-top:6px">月利 ${(monthlyRate*100).toFixed(3)}% / 今月利息発生額 ${yen(Math.round(debtRemaining*monthlyRate))}</div>
-        </div>`:`<div style="font-size:.7rem;color:#aaa;margin-top:8px">今月の返済を記録すると利息内訳が表示されます</div>`}
+          <div style="font-size:.68rem;color:#7a6050;margin-top:6px">${monthSummary.prev.month} ¥${monthSummary.prev.balance.toLocaleString()} → ${monthSummary.curr.month} ¥${monthSummary.curr.balance.toLocaleString()}</div>
+        </div>`:`<div style="font-size:.7rem;color:#aaa;margin-top:8px">⚙️設定タブで2ヶ月分の残高を記録すると返済内訳が表示されます</div>`}
       </div>
       <div class="card" style="padding:15px">
         <div class="section-title">タグ別支出</div>
@@ -785,7 +795,7 @@ function render(){
             <div><div class="lbl">金額（円）</div><input type="number" id="fAmt" placeholder="例:800" value="${form.amount}" min="1"/></div>
           </div>
           <div><div class="lbl">メモ（任意）</div><input type="text" id="fMemo" placeholder="例:ラーメン屋、食堂など" value="${form.memo}"/></div>
-          ${(form.tag==="debt"||form.tag==="prepay")?`<div style="background:#fdf0f0;border:1px solid #f1948a;border-radius:7px;padding:8px 11px;font-size:.73rem;color:var(--red)">💳 SMBC現在残高: <strong>${yen(debtRemaining)}</strong>　月利 ${(monthlyRate*100).toFixed(3)}%<br>${form.tag==="prepay"?"繰上返済：全額が元本返済として処理されます":"返済額から利息を引いた分だけ元本が減ります"}</div>`:""}
+          ${(form.tag==="debt"||form.tag==="prepay")?`<div style="background:#fdf0f0;border:1px solid #f1948a;border-radius:7px;padding:8px 11px;font-size:.73rem;color:var(--red)">💳 SMBC現在残高: <strong>${yen(debtRemaining)}</strong>　月利 ${(monthlyRate*100).toFixed(3)}%<br>${form.tag==="prepay"?"繰上返済：返済後に⚙️設定タブで残高を更新してください":"返済後に⚙️設定タブで残高を更新してください"}</div>`:""}
           <div style="text-align:right"><button class="pbtn" id="btnAdd">追加する</button></div>
         </div>
       </div>`;
@@ -920,7 +930,7 @@ function render(){
         </div>
       </div>`;
     setTimeout(()=>{
-      const smbcInit=nw.smbcRemaining;
+      const smbcInit=getSMBCRemaining();
       const rate=((debts.find(d=>d.id==="smbc")||{rate:0.12}).rate)/12;
       function runSim(){
         const junBonus=parseInt(document.getElementById("bonusJun").value);
@@ -1057,7 +1067,48 @@ function render(){
         </div>
         <hr style="border:none;border-top:1px solid var(--cream)"/>
         <div>
-          <div class="section-title">📊 現在の純資産サマリー</div>
+          <div class="section-title">📝 SMBC残高の月次記録</div>
+          <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">返済後にSMBCアプリで残高を確認して記録してください。月1回更新で完済予測が正確になります。</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <div class="lbl">対象月</div>
+              <input type="month" id="snapMonth" value="${cycleKey}"/>
+            </div>
+            <div>
+              <div class="lbl">実残高（円）</div>
+              <input type="number" id="snapBalance" placeholder="例: 1467259" min="0"/>
+            </div>
+          </div>
+          <div style="margin-bottom:8px">
+            <div class="lbl">メモ（任意）</div>
+            <input type="text" id="snapNote" placeholder="例: 通常返済、ボーナス繰上など"/>
+          </div>
+          <button class="pbtn" id="btnAddSnap" style="width:100%">残高を記録する</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--cream)"/>
+        <div>
+          <div class="section-title">📊 SMBC残高 月次履歴</div>
+          ${smbcSnapshots.length===0
+            ?`<div style="font-size:.75rem;color:#aaa;text-align:center;padding:16px">記録がありません</div>`
+            :`<div style="font-size:.72rem;">
+              ${[...smbcSnapshots].reverse().map((s,ri)=>{
+                const i=smbcSnapshots.length-1-ri;
+                const prev=i>0?smbcSnapshots[i-1]:null;
+                const diff=prev?s.balance-prev.balance:null;
+                const diffStr=diff!==null?(diff<0?`▼${yen(Math.abs(diff))}`:`▲${yen(diff)}`):"";
+                const diffCol=diff!==null?(diff<0?"var(--green)":"var(--red)"):"#9a8e82";
+                return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--cream)">
+                  <div style="flex:1">
+                    <div style="font-weight:600">${s.month}</div>
+                    ${s.note?`<div style="color:#9a8e82;font-size:.65rem">${s.note}</div>`:""}
+                  </div>
+                  <div style="font-weight:700;color:var(--red)">${yen(s.balance)}</div>
+                  ${diff!==null?`<div style="font-size:.7rem;color:${diffCol};min-width:60px;text-align:right">${diffStr}</div>`:""}
+                  <button class="del snap-del-btn" data-i="${i}" title="この記録を削除">✕</button>
+                </div>`;
+              }).join("")}
+            </div>`}
+        </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
             <div class="card" style="padding:10px;text-align:center">
               <div class="lbl" style="text-align:center">総資産</div>
@@ -1102,6 +1153,33 @@ function render(){
         });
         await saveMeta(); showFlash("負債情報を保存しました"); render();
       };
+      document.getElementById("btnAddSnap").onclick=async()=>{
+        const month=document.getElementById("snapMonth").value;
+        const balance=parseInt(document.getElementById("snapBalance").value);
+        const note=document.getElementById("snapNote").value.trim();
+        if(!month||isNaN(balance)||balance<0){showFlash("月と残高を正しく入力してください");return;}
+        // 同じ月が既にあれば上書き
+        const existIdx=smbcSnapshots.findIndex(s=>s.month===month);
+        const entry={month,balance,note,savedAt:new Date().toISOString()};
+        if(existIdx>=0) smbcSnapshots[existIdx]=entry;
+        else smbcSnapshots.push(entry);
+        // 月順でソート
+        smbcSnapshots.sort((a,b)=>a.month.localeCompare(b.month));
+        await saveMeta();
+        showFlash(`${month}の残高を記録しました`);
+        document.getElementById("snapBalance").value="";
+        document.getElementById("snapNote").value="";
+        render();
+      };
+      document.querySelectorAll(".snap-del-btn").forEach(btn=>{
+        btn.onclick=async()=>{
+          const i=parseInt(btn.dataset.i);
+          const m=smbcSnapshots[i].month;
+          if(!confirm(`${m}の記録を削除しますか？`)) return;
+          smbcSnapshots.splice(i,1);
+          await saveMeta(); showFlash(`${m}の記録を削除しました`); render();
+        };
+      });
     },0);
   }
 
