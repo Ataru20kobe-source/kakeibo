@@ -107,6 +107,7 @@
   </div>
   <div style="background:#fff;border-bottom:1px solid var(--border);display:flex;padding-left:4px;overflow-x:auto">
     <button class="tab on" data-tab="dash">📊 概要</button>
+    <button class="tab" data-tab="yearly">📈 年間</button>
     <button class="tab" data-tab="budget">📅 週次予算</button>
     <button class="tab" data-tab="input">✏️ 入力</button>
     <button class="tab" data-tab="ocr">📷 明細読込</button>
@@ -223,6 +224,8 @@ const DAILY_TAGS = [
   {id:"sub_info",    emoji:"📰", label:"サブスク(情報)",   color:"#3498db", bg:"#ebf5fb", desc:"新聞・ニュースサービスなど"},
   {id:"sub_tool",    emoji:"🛠️", label:"サブスク(ツール)", color:"#95a5a6", bg:"#f2f3f4", desc:"TickTick・Capcutなど"},
   {id:"subscription",emoji:"📱", label:"サブスク(その他)", color:"#1abc9c", bg:"#e8f8f5", desc:"旧データ互換用"},
+  {id:"cash_food",   emoji:"🍱", label:"現金引き出し_食費", color:"#c0392b", bg:"#fdf2f2", desc:"現金で食費を払った場合"},
+  {id:"cash_other",  emoji:"💴", label:"現金引き出し_その他",color:"#7f8c8d", bg:"#f2f3f4", desc:"現金でのイベント等支出"},
   {id:"life",        emoji:"⚔️",  label:"人生投資",         color:"#1e8449", bg:"#eafaf1", desc:"ライフワーク全般"},
   {id:"other_exp",   emoji:"📌", label:"その他",           color:"#7f8c8d", bg:"#f2f3f4", desc:"上記以外の支出"},
 ];
@@ -605,13 +608,58 @@ function render(){
     completionMonths=Math.ceil(Math.log(1-(debtRemaining*monthlyRate)/avgPrincipalPay)/Math.log(1+monthlyRate)*-1);
 
   if(currentTab==="dash"){
+    const nw=calcNetWorth();
+    const rakutenDebt=debts.find(d=>d.id==="rakuten")||{balance:49808,monthlyPay:6226};
+    const rakutenMonthsLeft=rakutenDebt.monthlyPay>0?Math.ceil(rakutenDebt.balance/rakutenDebt.monthlyPay):0;
+    // サブスク合計
+    const subIds=["sub_ai","sub_entame","sub_info","sub_tool","subscription"];
+    const subTotal=subIds.reduce((s,id)=>s+(byTag[id]||0),0);
+    // 来月引き落とし予定（クレジット系の今月支出累計）
+    const creditTags=["fixed","social","fashion","education","medical","event","sub_ai","sub_entame","sub_info","sub_tool","subscription","other_exp","life","karate"];
+    const nextMonthDue=cycleRecs.filter(r=>!r.isIncome&&creditTags.includes(r.tag)).reduce((s,r)=>s+r.amount,0);
+
     app.innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:11px">
+        <div class="card" style="padding:10px;text-align:center;border-left:3px solid var(--blue)">
+          <div class="lbl" style="text-align:center">総資産</div>
+          <div style="font-size:1rem;font-weight:700;color:var(--blue)">${yen(nw.totalAssets)}</div>
+        </div>
+        <div class="card" style="padding:10px;text-align:center;border-left:3px solid var(--red)">
+          <div class="lbl" style="text-align:center">総負債</div>
+          <div style="font-size:1rem;font-weight:700;color:var(--red)">${yen(nw.totalDebt)}</div>
+        </div>
+      </div>
+      <div class="card" style="padding:12px 14px;margin-bottom:11px;border-left:4px solid ${nw.netWorth>=0?"var(--green)":"var(--red)"}">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="lbl">純資産</div>
+            <div style="font-size:1.5rem;font-weight:700;color:${nw.netWorth>=0?"var(--green)":"var(--red)"}">${nw.netWorth<0?"▲":""}${yen(Math.abs(nw.netWorth))}</div>
+            ${nw.netWorth<0?`<div style="font-size:.65rem;color:#9a8e82;margin-top:1px">債務超過</div>`:""}
+          </div>
+          <div style="text-align:right;font-size:.7rem;color:#9a8e82;line-height:1.9">
+            <div>SMBC: ${yen(nw.smbcRemaining)}</div>
+            <div>楽天分割残: ${yen(nw.rakutenRemaining)}（残${rakutenMonthsLeft}回）</div>
+          </div>
+        </div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:11px">
         ${[{l:"収入",v:cycleIncome,c:"var(--blue)"},{l:"支出",v:cycleExpense,c:"var(--red)"},{l:"収支",v:cycleBalance,c:cycleBalance>=0?"var(--green)":"var(--red)"}].map(({l,v,c})=>`
           <div class="card" style="padding:11px 8px;text-align:center">
             <div class="lbl" style="text-align:center">${l}</div>
             <div style="font-size:.92rem;font-weight:700;color:${c}">${yen(v)}</div>
           </div>`).join("")}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:11px">
+        <div class="card" style="padding:11px;text-align:center">
+          <div class="lbl" style="text-align:center">📱 サブスク今月</div>
+          <div style="font-weight:700;color:#1abc9c">${yen(subTotal)}</div>
+          <div style="font-size:.63rem;color:#9a8e82">年換算 ${yen(subTotal*12)}</div>
+        </div>
+        <div class="card" style="padding:11px;text-align:center">
+          <div class="lbl" style="text-align:center">📅 来月引落予測</div>
+          <div style="font-weight:700;color:var(--gold)">${yen(nextMonthDue)}</div>
+          <div style="font-size:.63rem;color:#9a8e82">今月クレカ支出累計</div>
+        </div>
       </div>
       <div class="card" style="padding:16px;margin-bottom:11px;border-left:4px solid var(--red)">
         <div class="lbl">💳 SMBC借金残高（元本）</div>
@@ -808,6 +856,148 @@ function render(){
     },0);
   }
 
+  else if(currentTab==="yearly"){
+    const nw=calcNetWorth();
+    const movingSavings=records.filter(r=>r.tag==="moving").reduce((s,r)=>s+r.amount,0);
+    const movingGoal=500000;
+    const movingPct=Math.min(100,(movingSavings/movingGoal)*100);
+    app.innerHTML=`
+      <div class="card" style="padding:17px;margin-bottom:11px">
+        <div class="section-title">📦 引越し積立進捗</div>
+        <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:6px">
+          <span>積立済み <strong style="color:var(--blue)">${yen(movingSavings)}</strong></span>
+          <span>目標 <strong>${yen(movingGoal)}</strong></span>
+        </div>
+        <div class="bar-track" style="height:12px">
+          <div class="bar-fill" style="width:${movingPct}%;background:var(--blue)"></div>
+        </div>
+        <div style="font-size:.68rem;color:#9a8e82;margin-top:4px">${movingPct.toFixed(1)}% 達成 / 残り ${yen(movingGoal-movingSavings)}</div>
+      </div>
+      <div class="card" style="padding:17px;margin-bottom:11px">
+        <div class="section-title">💥 返済シミュレーション</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px">
+          <div>
+            <div class="lbl">6月ボーナス繰上返済額</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="range" id="bonusJun" min="0" max="800000" step="50000" value="400000" style="flex:1"/>
+              <span id="bonusJunVal" style="font-size:.78rem;font-weight:600;min-width:70px;text-align:right">¥400,000</span>
+            </div>
+          </div>
+          <div>
+            <div class="lbl">12月ボーナス繰上返済額</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="range" id="bonusDec" min="0" max="800000" step="50000" value="300000" style="flex:1"/>
+              <span id="bonusDecVal" style="font-size:.78rem;font-weight:600;min-width:70px;text-align:right">¥300,000</span>
+            </div>
+          </div>
+          <div>
+            <div class="lbl">月の追加返済額</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="range" id="extraPay" min="0" max="80000" step="5000" value="0" style="flex:1"/>
+              <span id="extraPayVal" style="font-size:.78rem;font-weight:600;min-width:70px;text-align:right">¥0</span>
+            </div>
+          </div>
+        </div>
+        <div id="simResult" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:14px"></div>
+        <canvas id="simCanvas" width="600" height="220" style="width:100%;height:auto;display:block"></canvas>
+      </div>
+      <div class="card" style="padding:17px">
+        <div class="section-title">📅 今年の主要イベント</div>
+        <div style="font-size:.75rem;line-height:2;color:#4a4035">
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--cream);padding:3px 0"><span>6月10日 ボーナス入金</span><span style="color:var(--green);font-weight:600">+¥810,000</span></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--cream);padding:3px 0"><span>6月12日 結婚式</span><span style="color:var(--red)">▲¥80,000</span></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--cream);padding:3px 0"><span>6月 帰省</span><span style="color:var(--red)">▲¥30,000</span></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--cream);padding:3px 0"><span>7〜8月 空手道着</span><span style="color:var(--red)">▲¥50,000</span></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--cream);padding:3px 0"><span>8月 帰省</span><span style="color:var(--red)">▲¥30,000</span></div>
+          <div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--cream);padding:3px 0"><span>12月 ボーナス入金</span><span style="color:var(--green);font-weight:600">+¥810,000</span></div>
+          <div style="display:flex;justify-content:space-between;padding:3px 0"><span>年内 引越し（50万積立後）</span><span style="color:var(--red)">▲¥500,000</span></div>
+        </div>
+      </div>`;
+    setTimeout(()=>{
+      const smbcInit=nw.smbcRemaining;
+      const rate=((debts.find(d=>d.id==="smbc")||{rate:0.12}).rate)/12;
+      function runSim(){
+        const junBonus=parseInt(document.getElementById("bonusJun").value);
+        const decBonus=parseInt(document.getElementById("bonusDec").value);
+        const extra=parseInt(document.getElementById("extraPay").value);
+        document.getElementById("bonusJunVal").textContent="¥"+junBonus.toLocaleString("ja-JP");
+        document.getElementById("bonusDecVal").textContent="¥"+decBonus.toLocaleString("ja-JP");
+        document.getElementById("extraPayVal").textContent="¥"+extra.toLocaleString("ja-JP");
+        let smbc=smbcInit;
+        const now=new Date();
+        const currentMonth=now.getMonth(); // 0-indexed
+        const months=[], balances=[];
+        let doneMonth=-1;
+        for(let i=0;i<60;i++){
+          const m=(currentMonth+i)%12;
+          const isJun=(m===5), isDec=(m===11);
+          const interest=Math.round(smbc*rate);
+          let pay=20000+extra+(isJun?junBonus:0)+(isDec?decBonus:0);
+          pay=Math.min(pay,smbc+interest);
+          smbc=Math.max(0,smbc+interest-pay);
+          months.push(`${i+1}ヶ月後`);
+          balances.push(Math.round(smbc));
+          if(smbc===0&&doneMonth<0) doneMonth=i;
+        }
+        const yr=doneMonth>=0?Math.floor((doneMonth+1)/12):null;
+        const mo=doneMonth>=0?(doneMonth+1)%12:null;
+        const doneStr=doneMonth>=0?`${yr>0?yr+"年":""}${mo}ヶ月`:"60ヶ月超";
+        const doneCol=doneMonth>=0&&doneMonth<36?"var(--green)":"var(--red)";
+        document.getElementById("simResult").innerHTML=`
+          <div class="card" style="padding:9px;text-align:center"><div class="lbl" style="text-align:center">完済目安</div><div style="font-weight:700;font-size:.9rem;color:${doneCol}">${doneStr}</div></div>
+          <div class="card" style="padding:9px;text-align:center"><div class="lbl" style="text-align:center">6月後残高</div><div style="font-weight:700;font-size:.85rem;color:var(--red)">¥${Math.max(0,smbcInit-(junBonus)).toLocaleString()}</div></div>
+          <div class="card" style="padding:9px;text-align:center"><div class="lbl" style="text-align:center">12月後残高</div><div style="font-weight:700;font-size:.85rem;color:var(--red)">¥${Math.max(0,smbcInit-(junBonus+decBonus)).toLocaleString()}</div></div>`;
+        // Canvas折れ線グラフ
+        const canvas=document.getElementById("simCanvas");
+        if(!canvas) return;
+        const ctx=canvas.getContext("2d");
+        const W=canvas.width, H=canvas.height;
+        const pad={t:20,r:20,b:36,l:62};
+        ctx.clearRect(0,0,W,H);
+        const max=Math.max(...balances,1);
+        const xStep=(W-pad.l-pad.r)/(balances.length-1);
+        const yScale=(H-pad.t-pad.b)/max;
+        // grid
+        ctx.strokeStyle="#e8e0d4"; ctx.lineWidth=0.5;
+        for(let i=0;i<=4;i++){
+          const y=pad.t+(H-pad.t-pad.b)*i/4;
+          ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+          ctx.fillStyle="#9a8e82";ctx.font="10px sans-serif";ctx.textAlign="right";
+          ctx.fillText("¥"+(Math.round(max*(4-i)/4)/10000).toFixed(0)+"万",pad.l-4,y+3);
+        }
+        // ボーナス月マーク
+        [1,7].forEach(mi=>{
+          const x=pad.l+mi*xStep;
+          ctx.strokeStyle="#f0d060";ctx.lineWidth=1;ctx.setLineDash([3,3]);
+          ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,H-pad.b);ctx.stroke();
+          ctx.setLineDash([]);
+        });
+        // 折れ線
+        ctx.strokeStyle="#c0392b";ctx.lineWidth=2;ctx.setLineDash([]);
+        ctx.beginPath();
+        balances.forEach((b,i)=>{
+          const x=pad.l+i*xStep, y=pad.t+(max-b)*yScale;
+          i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+        });
+        ctx.stroke();
+        // 0円ライン
+        if(doneMonth>=0){
+          ctx.fillStyle="#1e8449";ctx.font="bold 11px sans-serif";ctx.textAlign="left";
+          ctx.fillText("✓ 完済",pad.l+doneMonth*xStep+4,H-pad.b-6);
+        }
+        // x軸ラベル
+        ctx.fillStyle="#9a8e82";ctx.font="9px sans-serif";ctx.textAlign="center";
+        [0,11,23,35,47,59].forEach(i=>{
+          if(i<months.length) ctx.fillText(months[i],pad.l+i*xStep,H-pad.b+14);
+        });
+      }
+      runSim();
+      document.getElementById("bonusJun").oninput=runSim;
+      document.getElementById("bonusDec").oninput=runSim;
+      document.getElementById("extraPay").oninput=runSim;
+    },0);
+  }
+
   else if(currentTab==="settings"){
     const nw=calcNetWorth();
     app.innerHTML=`
@@ -910,11 +1100,11 @@ function render(){
             <thead><tr><th>手段</th><th>方法</th><th>頻度</th></tr></thead>
             <tbody>
               <tr><td>💬 PayPay</td><td>明細スクショ → OCR読込</td><td>週1回</td></tr>
-              <tr><td>🏦 デビットカード</td><td>銀行明細スクショ → OCR読込</td><td>週1回</td></tr>
+              <tr><td>🏦 銀行口座（デビット）</td><td>銀行明細スクショ → OCR読込</td><td>週1回</td></tr>
               <tr><td>💳 クレジットカード</td><td>明細スクショ → OCR読込</td><td>週1回</td></tr>
               <tr><td>🚃 Suica</td><td>Suica明細 → OCR読込</td><td>週1回</td></tr>
-              <tr><td>🏦 給与入金</td><td>銀行口座（給与入金）→ OCR読込</td><td>月1回</td></tr>
-              <tr><td>💴 現金</td><td><strong>使った瞬間に手動入力</strong></td><td>その都度</td></tr>
+              <tr><td>🏦 給与入金</td><td><strong>手動入力（✏️入力タブ）</strong></td><td>月1回</td></tr>
+              <tr><td>💴 現金</td><td>手動入力（現金引き出し_食費/その他）</td><td>その都度</td></tr>
             </tbody>
           </table>
         </div>
@@ -933,11 +1123,12 @@ function render(){
         </div>
         <div style="background:#fefde7;border:1px solid #f0d060;border-radius:8px;padding:11px 13px;font-size:.76rem;line-height:1.8;color:#5a4a00">
           <strong>💡 週1ルーティン（目安5分）</strong><br>
-          ① PayPay・デビット・クレカ・Suicaの明細スクショを撮る<br>
+          ① 銀行口座・PayPay・クレカ・Suicaの明細スクショを撮る<br>
           ② 📷 明細読込タブで1枚ずつ読み込む<br>
           ③ 週次予算タブで進捗を確認<br>
           ④ ズレがあればAI分析で原因チェック<br>
-          ⑤ 給与日翌日に給与入金をOCR読込
+          ⑤ 給与日に✏️入力タブで給与を手動入力<br>
+          ⑥ 月末に⚙️設定タブで口座残高を更新
         </div>
       </div>`;
   }
