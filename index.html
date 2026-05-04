@@ -328,6 +328,7 @@ let currentUser=null, records=[], budgets={};
 let smbcSnapshots=[];  // [{month, balance, note, savedAt}]
 let debts=[...DEFAULT_DEBTS.map(d=>({...d}))];
 let accounts=[...DEFAULT_ACCOUNTS.map(a=>({...a}))];
+let savingsGoal=30000; // 月次貯蓄目標（デフォルト3万）
 let cycleKey=getCycleKey(todayStr()), currentTab="dash";
 let form={date:todayStr(),tag:"food",amount:"",memo:"",isIncome:false};
 let aiResult="", unsubs=[], ocrType="paypay", ocrCands=[];
@@ -374,6 +375,7 @@ function startSync(uid){
       if(d.debts) debts=d.debts;
       if(d.accounts) accounts=d.accounts;
       if(d.smbcSnapshots) smbcSnapshots=d.smbcSnapshots;
+      if(typeof d.savingsGoal==="number") savingsGoal=d.savingsGoal;
       // 後方互換: 旧debtPrincipalPaidが存在してスナップショットが空の場合
       if(!d.smbcSnapshots && d.debtPrincipalPaid){
         const smbcDebt=debts.find(x=>x.id==="smbc");
@@ -389,7 +391,7 @@ function startSync(uid){
 async function saveMeta(){
   if(!currentUser) return;
   setSyncStatus("syncing");
-  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{budgets,debts,accounts,smbcSnapshots});
+  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{budgets,debts,accounts,smbcSnapshots,savingsGoal});
   setSyncStatus("ok");
 }
 async function addRecord(rec){
@@ -717,7 +719,110 @@ function render(){
             </div>
             <div class="bar-track"><div class="bar-fill" style="width:${cycleExpense>0?Math.min(100,(byTag[t.id]/cycleExpense)*100):0}%;background:${t.color}"></div></div>
           </div>`).join("")}
-      </div>`;
+      </div>
+      ${(()=>{
+        // ── 可処分所得計算 ──────────────────────────
+        const infraFixed = accounts.length>0 ? 16622 : 16622; // 固定インフラ（設定値がなければデフォルト）
+        const infraActual = (byTag["fixed"]||0);
+        const infraAmt = infraActual>0 ? infraActual : infraFixed;
+        const subAmt = ["sub_ai","sub_entame","sub_info","sub_tool","subscription"].reduce((s,id)=>s+(byTag[id]||0),0);
+        const debtAmt = ["debt","prepay","rakuten_pay"].reduce((s,id)=>s+(byTag[id]||0),0);
+        const fixedTotal = infraAmt + subAmt + debtAmt;
+        const disposable = cycleIncome - fixedTotal;
+        const varExp = cycleExpense - debtAmt - infraAmt - subAmt;
+        const remaining = disposable - Math.max(0,varExp);
+        const afterCard = remaining - (nw.cardDebt||0);
+        const spendLimit = remaining - savingsGoal;
+        const savingsPct = disposable>0 ? Math.min(100,(savingsGoal/disposable)*100) : 0;
+        const usedPct = disposable>0 ? Math.min(100,(Math.max(0,varExp)/disposable)*100) : 0;
+        const remainPct = 100 - Math.min(100, usedPct + savingsPct);
+
+        const barSegs = [
+          {pct:Math.min(100,usedPct), color:"#c0392b", label:"変動支出"},
+          {pct:Math.min(100,savingsPct), color:"#9a7d0a", label:"貯蓄目標"},
+          {pct:Math.max(0,remainPct), color:"#1e8449", label:"残余"},
+        ];
+        const barHtml = barSegs.map(s=>`<div style="height:100%;width:${s.pct}%;background:${s.color};transition:width .6s ease"></div>`).join("");
+
+        return `<div class="card" style="padding:16px;margin-top:11px">
+          <div class="section-title">💰 今月の可処分所得</div>
+          <div style="display:flex;flex-direction:column;gap:7px;font-size:.76rem;margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;padding:5px 8px;background:var(--cream);border-radius:5px">
+              <span>今月の収入</span>
+              <span style="font-weight:600;color:var(--blue)">${yen(cycleIncome)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:5px 8px">
+              <span style="color:#7a6e62">　− インフラ固定費</span>
+              <span style="color:var(--red)">▲${yen(infraAmt)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:5px 8px">
+              <span style="color:#7a6e62">　− サブスク</span>
+              <span style="color:var(--red)">▲${yen(subAmt)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:5px 8px">
+              <span style="color:#7a6e62">　− 借金返済</span>
+              <span style="color:var(--red)">▲${yen(debtAmt)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 8px;background:#eaf4fb;border-radius:5px;border-left:3px solid var(--blue)">
+              <span style="font-weight:600">理論的可処分所得</span>
+              <span style="font-weight:700;color:var(--blue)">${yen(disposable)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:5px 8px">
+              <span style="color:#7a6e62">　− 今月の変動支出（実績）</span>
+              <span style="color:var(--red)">▲${yen(Math.max(0,varExp))}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 8px;background:${remaining>=0?"#eafaf1":"#fdf0f0"};border-radius:5px;border-left:3px solid ${remaining>=0?"var(--green)":"var(--red)"}">
+              <span style="font-weight:600">今月の残余</span>
+              <span style="font-weight:700;color:${remaining>=0?"var(--green)":"var(--red)"}">${remaining<0?"▲":""}${yen(Math.abs(remaining))}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:5px 8px">
+              <span style="color:#7a6e62">　− 来月クレカ引き落とし予測</span>
+              <span style="color:var(--red)">▲${yen(nw.cardDebt||0)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:6px 8px;background:${afterCard>=0?"#fefde7":"#fdf0f0"};border-radius:5px;border-left:3px solid ${afterCard>=0?"var(--gold)":"var(--red)"}">
+              <span style="font-weight:600">引き落とし後の実質残余</span>
+              <span style="font-weight:700;color:${afterCard>=0?"var(--gold)":"var(--red)"}">${afterCard<0?"▲":""}${yen(Math.abs(afterCard))}</span>
+            </div>
+          </div>
+          <div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;font-size:.7rem;color:#9a8e82;margin-bottom:4px">
+              <span>可処分所得の使われ方</span>
+              <span>${cycleIncome>0?"":"収入を記録すると表示されます"}</span>
+            </div>
+            <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--cream)">${barHtml}</div>
+            <div style="display:flex;gap:10px;margin-top:5px;font-size:.63rem;color:#9a8e82">
+              <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#c0392b;display:inline-block"></span>変動支出</span>
+              <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#9a7d0a;display:inline-block"></span>貯蓄目標</span>
+              <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#1e8449;display:inline-block"></span>残余</span>
+            </div>
+          </div>
+          <div style="background:var(--cream);border-radius:7px;padding:9px 12px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:.76rem;font-weight:600">月次貯蓄目標</span>
+              <input type="number" id="savingsGoalInput" value="${savingsGoal}" min="0" step="5000"
+                style="width:110px;font-size:.76rem;padding:4px 8px;border:1.5px solid var(--border);border-radius:5px;background:#fff;font-family:inherit"/>
+              <span style="font-size:.72rem;color:#9a8e82">円</span>
+              <button id="btnSaveGoal" style="background:var(--ink);color:var(--paper);border:none;border-radius:5px;padding:4px 10px;font-size:.72rem;cursor:pointer;font-family:inherit">保存</button>
+            </div>
+            <div style="font-size:.72rem;color:#7a6050">
+              貯蓄後に使える上限：<strong style="color:${spendLimit>=0?"var(--green)":"var(--red)"}">${spendLimit>=0?"":"-"}${yen(Math.abs(spendLimit))}</strong>
+              　残り日数で割ると：<strong>${(()=>{
+                const today=new Date();
+                const endDate=new Date(end+"T00:00:00");
+                const daysLeft=Math.max(1,Math.ceil((endDate-today)/(1000*60*60*24)));
+                return yen(Math.max(0,Math.floor(spendLimit/daysLeft)))+"/日";
+              })()}</strong>
+            </div>
+          </div>
+        </div>`;
+      })()}`;
+    setTimeout(()=>{
+      const btn=document.getElementById("btnSaveGoal");
+      if(btn) btn.onclick=async()=>{
+        const v=parseInt(document.getElementById("savingsGoalInput").value);
+        if(!isNaN(v)&&v>=0){savingsGoal=v;await saveMeta();showFlash("貯蓄目標を保存しました");render();}
+      };
+    },0);
   }
 
   else if(currentTab==="budget"){
