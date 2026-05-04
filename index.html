@@ -112,6 +112,7 @@
     <button class="tab" data-tab="ocr">📷 明細読込</button>
     <button class="tab" data-tab="list">📋 明細</button>
     <button class="tab" data-tab="ai">✦ AI</button>
+    <button class="tab" data-tab="settings">⚙️ 設定</button>
     <button class="tab" data-tab="guide">📖 ガイド</button>
   </div>
   <div id="app" style="max-width:640px;margin:0 auto;padding:13px 11px"></div>
@@ -181,33 +182,55 @@ const firebaseApp = initializeApp(firebaseConfig);
 const db   = getFirestore(firebaseApp);
 const auth = getAuth(firebaseApp);
 
-const INITIAL_DEBT = 1600000;
-const ANNUAL_RATE  = 0.10;
 const PAYDAY = 20;
+
+// ── 負債定義（複数管理・ハードコード廃止） ─────────────────
+// デフォルト値。設定画面で上書き可能（Firebase保存）
+const DEFAULT_DEBTS = [
+  {id:"smbc",    label:"SMBC借金",       balance:1483926, rate:0.12, monthlyPay:20000,  color:"#c0392b"},
+  {id:"rakuten", label:"楽天分割残",     balance:49808,   rate:0,    monthlyPay:6226,   color:"#e67e22"},
+];
+const DEFAULT_ACCOUNTS = [
+  {id:"smbc_acc",  label:"SMBC",   balance:99691},
+  {id:"ufj",       label:"UFJ",    balance:19215},
+  {id:"suica",     label:"Suica",  balance:237},
+  {id:"paypay",    label:"PayPay", balance:7377},
+  {id:"cash",      label:"現金",   balance:541},
+];
 
 // ── タグ定義 ──────────────────────────────────────────────
 const FIXED_TAGS = [
-  {id:"debt",    emoji:"💳", label:"借金返済",             color:"#c0392b", bg:"#fdf0f0", desc:"元本から利息を引いた分が残高に反映"},
-  {id:"fixed",   emoji:"🏠", label:"固定費",               color:"#7d3c98", bg:"#f5eeff", desc:"家賃・光熱費"},
-  {id:"moving",  emoji:"📦", label:"引越し積立",           color:"#1a5276", bg:"#eaf4fb", desc:"9月引越しのための積立"},
-  {id:"life",    emoji:"⚔️",  label:"空手・小説・人生投資", color:"#1e8449", bg:"#eafaf1", desc:"ライフワーク・娯楽"},
-  {id:"savings", emoji:"💰", label:"積立費",               color:"#9a7d0a", bg:"#fefde7", desc:"月末残り・余剰積立"},
+  {id:"debt",    emoji:"💳", label:"借金返済(SMBC)",      color:"#c0392b", bg:"#fdf0f0", desc:"利息分を引いた元本が残高に反映"},
+  {id:"prepay",  emoji:"💥", label:"繰上返済(SMBC)",      color:"#922b21", bg:"#fce4e4", desc:"ボーナス等での一括繰上返済"},
+  {id:"rakuten_pay", emoji:"🟠", label:"楽天分割返済",    color:"#e67e22", bg:"#fef5e7", desc:"楽天カード分割払いの月次返済"},
+  {id:"fixed",   emoji:"🏠", label:"固定費",              color:"#7d3c98", bg:"#f5eeff", desc:"光熱費・通信費など"},
+  {id:"moving",  emoji:"📦", label:"引越し積立",          color:"#1a5276", bg:"#eaf4fb", desc:"引越しのための積立"},
+  {id:"savings", emoji:"💰", label:"積立費",              color:"#9a7d0a", bg:"#fefde7", desc:"月末余剰積立"},
 ];
 const DAILY_TAGS = [
-  {id:"food",        emoji:"🍜", label:"食費",         color:"#e67e22", bg:"#fef5e7", desc:"外食・定食屋など"},
-  {id:"food_cvs",    emoji:"🏪", label:"食費（コンビニ）", color:"#f39c12", bg:"#fef9f0", desc:"コンビニでの食品購入"},
-  {id:"daily_goods", emoji:"🧴", label:"日用品",       color:"#16a085", bg:"#e8f8f5", desc:"生活消耗品など"},
-  {id:"fashion",     emoji:"👗", label:"衣服・美容",   color:"#8e44ad", bg:"#f5eeff", desc:"洋服・美容院など"},
-  {id:"education",   emoji:"📚", label:"教育・教養",   color:"#2980b9", bg:"#ebf5fb", desc:"書籍・講座など"},
-  {id:"medical",     emoji:"💊", label:"医療費",       color:"#c0392b", bg:"#fdf2f2", desc:"病院・薬局など"},
-  {id:"social",      emoji:"🤝", label:"交際費",       color:"#d35400", bg:"#fef5ec", desc:"飲み会・贈り物など"},
-  {id:"subscription",emoji:"📱", label:"サブスク",     color:"#1abc9c", bg:"#e8f8f5", desc:"Netflix・Spotifyなど"},
-  {id:"other_exp",   emoji:"📌", label:"その他",       color:"#7f8c8d", bg:"#f2f3f4", desc:"上記以外の支出"},
+  {id:"food",        emoji:"🍜", label:"食費",             color:"#e67e22", bg:"#fef5e7", desc:"外食・定食屋など"},
+  {id:"food_cvs",    emoji:"🏪", label:"食費（コンビニ）",  color:"#f39c12", bg:"#fef9f0", desc:"コンビニでの食品購入"},
+  {id:"daily_goods", emoji:"🧴", label:"日用品",           color:"#16a085", bg:"#e8f8f5", desc:"生活消耗品など"},
+  {id:"fashion",     emoji:"👗", label:"衣服・美容",       color:"#8e44ad", bg:"#f5eeff", desc:"洋服・美容院など"},
+  {id:"transport",   emoji:"🚃", label:"交通費",           color:"#2471a3", bg:"#eaf4fb", desc:"電車・バス・タクシーなど"},
+  {id:"karate",      emoji:"🥋", label:"空手",             color:"#1e8449", bg:"#eafaf1", desc:"道場費・道着・大会費など"},
+  {id:"event",       emoji:"🎫", label:"イベント",         color:"#6c3483", bg:"#f4ecf7", desc:"イベント・コンサート参加費など"},
+  {id:"education",   emoji:"📚", label:"教育・教養",       color:"#2980b9", bg:"#ebf5fb", desc:"書籍・講座・サブスクなど"},
+  {id:"medical",     emoji:"💊", label:"医療費",           color:"#c0392b", bg:"#fdf2f2", desc:"病院・薬局など"},
+  {id:"social",      emoji:"🤝", label:"交際費",           color:"#d35400", bg:"#fef5ec", desc:"飲み会・冠婚葬祭など"},
+  {id:"sub_ai",      emoji:"🤖", label:"サブスク(AI)",     color:"#1abc9c", bg:"#e8f8f5", desc:"Claude・Geminiなど"},
+  {id:"sub_entame",  emoji:"🎬", label:"サブスク(娯楽)",   color:"#2ecc71", bg:"#eafaf1", desc:"Netflix・Apple Oneなど"},
+  {id:"sub_info",    emoji:"📰", label:"サブスク(情報)",   color:"#3498db", bg:"#ebf5fb", desc:"新聞・ニュースサービスなど"},
+  {id:"sub_tool",    emoji:"🛠️", label:"サブスク(ツール)", color:"#95a5a6", bg:"#f2f3f4", desc:"TickTick・Capcutなど"},
+  {id:"subscription",emoji:"📱", label:"サブスク(その他)", color:"#1abc9c", bg:"#e8f8f5", desc:"旧データ互換用"},
+  {id:"life",        emoji:"⚔️",  label:"人生投資",         color:"#1e8449", bg:"#eafaf1", desc:"ライフワーク全般"},
+  {id:"other_exp",   emoji:"📌", label:"その他",           color:"#7f8c8d", bg:"#f2f3f4", desc:"上記以外の支出"},
 ];
 const EXPENSE_TAGS = [...FIXED_TAGS, ...DAILY_TAGS];
 const INCOME_TAGS = [
-  {id:"salary",   emoji:"💼", label:"給与",      color:"#1a5276", bg:"#eaf4fb", desc:"毎月の給与（手取り）"},
-  {id:"side",     emoji:"🌱", label:"副業",      color:"#1e8449", bg:"#eafaf1", desc:"副業・フリーランス"},
+  {id:"salary",   emoji:"💼", label:"給与",       color:"#1a5276", bg:"#eaf4fb", desc:"毎月の給与（手取り）"},
+  {id:"bonus",    emoji:"🎁", label:"ボーナス",   color:"#9a7d0a", bg:"#fefde7", desc:"賞与・ボーナス"},
+  {id:"side",     emoji:"🌱", label:"副業",       color:"#1e8449", bg:"#eafaf1", desc:"副業・フリーランス"},
   {id:"other_in", emoji:"📥", label:"その他収入", color:"#6d6d6d", bg:"#f4f4f4", desc:"臨時収入など"},
 ];
 const ALL_TAGS = [...INCOME_TAGS, ...EXPENSE_TAGS];
@@ -253,15 +276,34 @@ function getWeeks(key) {
   return weeks;
 }
 
-// 利息計算（修正版）：元本残高×月利=利息、返済額-利息=元本返済分
-function calcInterest(currentPrincipal, paymentAmount) {
-  const monthlyRate = ANNUAL_RATE/12;
+// 利息計算：元本残高×月利=利息、返済額-利息=元本返済分
+function calcInterest(currentPrincipal, paymentAmount, annualRate) {
+  const monthlyRate = annualRate/12;
   const interestPart  = Math.round(currentPrincipal*monthlyRate);
   const principalPart = Math.max(0, paymentAmount-interestPart);
   return {interestPart, principalPart};
 }
 
+// SMBC借金残高を動的に計算（debts[0].balanceを初期値として使用）
+function getSMBCRemaining() {
+  const smbcDebt = debts.find(d=>d.id==="smbc");
+  const initialBalance = smbcDebt ? smbcDebt.balance : 1483926;
+  return Math.max(0, initialBalance - debtPrincipalPaid);
+}
+
+// 総資産・総負債の計算
+function calcNetWorth() {
+  const totalAssets = accounts.reduce((s,a)=>s+a.balance, 0);
+  const smbcRemaining = getSMBCRemaining();
+  const rakutenDebt = debts.find(d=>d.id==="rakuten");
+  const rakutenRemaining = rakutenDebt ? rakutenDebt.balance : 49808;
+  const totalDebt = smbcRemaining + rakutenRemaining;
+  return {totalAssets, totalDebt, netWorth: totalAssets - totalDebt, smbcRemaining, rakutenRemaining};
+}
+
 let currentUser=null, records=[], debtPrincipalPaid=0, budgets={};
+let debts=[...DEFAULT_DEBTS.map(d=>({...d}))];
+let accounts=[...DEFAULT_ACCOUNTS.map(a=>({...a}))];
 let cycleKey=getCycleKey(todayStr()), currentTab="dash";
 let form={date:todayStr(),tag:"food",amount:"",memo:"",isIncome:false};
 let aiResult="", unsubs=[], ocrType="paypay", ocrCands=[];
@@ -306,6 +348,8 @@ function startSync(uid){
       const d=snap.data();
       debtPrincipalPaid=d.debtPrincipalPaid??d.debtPaid??0;
       budgets=d.budgets||{};
+      if(d.debts) debts=d.debts;
+      if(d.accounts) accounts=d.accounts;
     }
     render();
   });
@@ -314,7 +358,7 @@ function startSync(uid){
 async function saveMeta(){
   if(!currentUser) return;
   setSyncStatus("syncing");
-  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{debtPrincipalPaid,budgets});
+  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{debtPrincipalPaid,budgets,debts,accounts});
   setSyncStatus("ok");
 }
 async function addRecord(rec){
@@ -322,13 +366,30 @@ async function addRecord(rec){
   setSyncStatus("syncing");
   const id=Date.now()+"-"+Math.random().toString(36).slice(2);
   let enriched={...rec,id};
+  const smbcDebt = debts.find(d=>d.id==="smbc");
+  const smbcRate = smbcDebt ? smbcDebt.rate : 0.12;
   if(rec.tag==="debt"){
-    const currentPrincipal=INITIAL_DEBT-debtPrincipalPaid;
-    const {interestPart,principalPart}=calcInterest(currentPrincipal,rec.amount);
+    const currentPrincipal=getSMBCRemaining();
+    const {interestPart,principalPart}=calcInterest(currentPrincipal,rec.amount,smbcRate);
     enriched.interestPart=interestPart;
     enriched.principalPart=principalPart;
     await setDoc(doc(db,`users/${currentUser.uid}/records`,id),enriched);
     debtPrincipalPaid+=principalPart;
+    await saveMeta();
+  } else if(rec.tag==="prepay"){
+    // 繰上返済：全額元本返済として処理
+    enriched.interestPart=0;
+    enriched.principalPart=rec.amount;
+    await setDoc(doc(db,`users/${currentUser.uid}/records`,id),enriched);
+    debtPrincipalPaid+=rec.amount;
+    await saveMeta();
+  } else if(rec.tag==="rakuten_pay"){
+    // 楽天分割：debtsのrakuten残高を減らす
+    const rakIdx=debts.findIndex(d=>d.id==="rakuten");
+    if(rakIdx>=0){
+      debts[rakIdx].balance=Math.max(0,debts[rakIdx].balance-rec.amount);
+    }
+    await setDoc(doc(db,`users/${currentUser.uid}/records`,id),enriched);
     await saveMeta();
   } else {
     await setDoc(doc(db,`users/${currentUser.uid}/records`,id),enriched);
@@ -339,9 +400,13 @@ async function deleteRecord(rec){
   if(!currentUser) return;
   setSyncStatus("syncing");
   await deleteDoc(doc(db,`users/${currentUser.uid}/records`,rec.id));
-  if(rec.tag==="debt"){
+  if(rec.tag==="debt"||rec.tag==="prepay"){
     const principal=rec.principalPart??rec.amount;
     debtPrincipalPaid=Math.max(0,debtPrincipalPaid-principal);
+    await saveMeta();
+  } else if(rec.tag==="rakuten_pay"){
+    const rakIdx=debts.findIndex(d=>d.id==="rakuten");
+    if(rakIdx>=0) debts[rakIdx].balance+=rec.amount;
     await saveMeta();
   }
   setSyncStatus("ok");
@@ -519,19 +584,21 @@ function render(){
   const cycleIncome=cycleRecs.filter(r=>r.isIncome).reduce((s,r)=>s+r.amount,0);
   const cycleExpense=cycleRecs.filter(r=>!r.isIncome).reduce((s,r)=>s+r.amount,0);
   const cycleBalance=cycleIncome-cycleExpense;
-  const debtRemaining=INITIAL_DEBT-debtPrincipalPaid;
-  const debtPct=Math.min(100,(debtPrincipalPaid/INITIAL_DEBT)*100);
+  const debtRemaining=getSMBCRemaining();
+  const smbcDebt=debts.find(d=>d.id==="smbc")||DEFAULT_DEBTS[0];
+  const initialSMBC=smbcDebt.balance;
+  const debtPct=Math.min(100,(debtPrincipalPaid/initialSMBC)*100);
   const byTag=Object.fromEntries(ALL_TAGS.map(t=>[t.id,cycleRecs.filter(r=>r.tag===t.id).reduce((s,r)=>s+r.amount,0)]));
   const weekActuals=weeks.map(w=>cycleRecs.filter(r=>!r.isIncome&&r.date>=w.start&&r.date<=w.end).reduce((s,r)=>s+r.amount,0));
   const cycleBudget=budgets[cycleKey]||{};
   const totalBudget=weeks.reduce((s,_,i)=>s+(cycleBudget[`w${i}`]||0),0);
   const budgetOverIncome=cycleIncome>0&&totalBudget>cycleIncome;
-  const monthlyRate=ANNUAL_RATE/12;
-  const debtRecs=cycleRecs.filter(r=>r.tag==="debt");
+  const monthlyRate=smbcDebt.rate/12;
+  const debtRecs=cycleRecs.filter(r=>r.tag==="debt"||r.tag==="prepay");
   const monthDebtPayment=debtRecs.reduce((s,r)=>s+r.amount,0);
   const monthInterestTotal=debtRecs.reduce((s,r)=>s+(r.interestPart||0),0);
   const monthPrincipalTotal=debtRecs.reduce((s,r)=>s+(r.principalPart??r.amount),0);
-  const allDebtRecs=records.filter(r=>r.tag==="debt");
+  const allDebtRecs=records.filter(r=>r.tag==="debt"||r.tag==="prepay");
   const avgPrincipalPay=allDebtRecs.length>0?allDebtRecs.reduce((s,r)=>s+(r.principalPart??r.amount),0)/Math.max(1,new Set(allDebtRecs.map(r=>r.date.slice(0,7))).size):0;
   let completionMonths=null;
   if(avgPrincipalPay>debtRemaining*monthlyRate&&avgPrincipalPay>0)
@@ -547,9 +614,9 @@ function render(){
           </div>`).join("")}
       </div>
       <div class="card" style="padding:16px;margin-bottom:11px;border-left:4px solid var(--red)">
-        <div class="lbl">💳 借金残高（元本）</div>
+        <div class="lbl">💳 SMBC借金残高（元本）</div>
         <div style="font-size:1.7rem;font-weight:700;color:var(--red);margin-bottom:2px">${yen(debtRemaining)}</div>
-        <div style="font-size:.66rem;color:#9a8e82;margin-bottom:10px">元本返済済 ${yen(debtPrincipalPaid)} / 初期元本 ${yen(INITIAL_DEBT)}</div>
+        <div style="font-size:.66rem;color:#9a8e82;margin-bottom:10px">元本返済済 ${yen(debtPrincipalPaid)} / 初期元本 ${yen(initialSMBC)}</div>
         <div class="bar-track"><div class="bar-fill" style="width:${debtPct}%;background:var(--red)"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:.64rem;color:#9a8e82;margin-top:3px">
           <span>元本返済率 ${debtPct.toFixed(1)}%</span>
@@ -557,7 +624,7 @@ function render(){
         </div>
         ${monthDebtPayment>0?`
         <div class="interest-box" style="margin-top:12px">
-          <div style="font-weight:600;margin-bottom:6px">今月の返済内訳（年利10%）</div>
+          <div style="font-weight:600;margin-bottom:6px">今月の返済内訳（年利${(smbcDebt.rate*100).toFixed(0)}%）</div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
             <div><div class="lbl" style="text-align:center">返済合計</div><div style="font-weight:700">${yen(monthDebtPayment)}</div></div>
             <div><div class="lbl" style="text-align:center">うち利息</div><div style="font-weight:700;color:var(--red)">${yen(monthInterestTotal)}</div></div>
@@ -664,7 +731,7 @@ function render(){
             <div><div class="lbl">金額（円）</div><input type="number" id="fAmt" placeholder="例:800" value="${form.amount}" min="1"/></div>
           </div>
           <div><div class="lbl">メモ（任意）</div><input type="text" id="fMemo" placeholder="例:ラーメン屋、食堂など" value="${form.memo}"/></div>
-          ${form.tag==="debt"?`<div style="background:#fdf0f0;border:1px solid #f1948a;border-radius:7px;padding:8px 11px;font-size:.73rem;color:var(--red)">💳 現在残高: <strong>${yen(debtRemaining)}</strong>　月利 ${(monthlyRate*100).toFixed(3)}%<br>返済額から利息を引いた分だけ元本が減ります</div>`:""}
+          ${(form.tag==="debt"||form.tag==="prepay")?`<div style="background:#fdf0f0;border:1px solid #f1948a;border-radius:7px;padding:8px 11px;font-size:.73rem;color:var(--red)">💳 SMBC現在残高: <strong>${yen(debtRemaining)}</strong>　月利 ${(monthlyRate*100).toFixed(3)}%<br>${form.tag==="prepay"?"繰上返済：全額が元本返済として処理されます":"返済額から利息を引いた分だけ元本が減ります"}</div>`:""}
           <div style="text-align:right"><button class="pbtn" id="btnAdd">追加する</button></div>
         </div>
       </div>`;
@@ -732,11 +799,96 @@ function render(){
         const fixedSum=FIXED_TAGS.map(t=>`  ${t.label}: ${yen(byTag[t.id])}`).join("\n");
         const dailySum=DAILY_TAGS.map(t=>`  ${t.label}: ${yen(byTag[t.id])}`).join("\n");
         const weekSum=weeks.map((w,i)=>`  ${w.label}: 予算${yen(cycleBudget[`w${i}`]||0)} / 実績${yen(weekActuals[i])}`).join("\n");
-        const prompt=`給与月: ${cycleKey}（${start}〜${end}）\n収入: ${yen(cycleIncome)} / 支出: ${yen(cycleExpense)} / 収支: ${yen(cycleBalance)}\n借金残高（元本）: ${yen(debtRemaining)}（年利10%）\n今月の利息: ${yen(monthInterestTotal)} / 元本返済: ${yen(monthPrincipalTotal)}\n${completionMonths?`完済予測: あと約${completionMonths}ヶ月`:""}\n\n固定支出:\n${fixedSum}\n\n日常支出:\n${dailySum}\n\n週次予算vs実績:\n${weekSum}\n\n①収支の総評、②借金返済ペースと利息負担の評価、③週次予算の達成状況、④日常支出の傾向と改善アドバイス3点`;
+        const prompt=`給与月: ${cycleKey}（${start}〜${end}）\n収入: ${yen(cycleIncome)} / 支出: ${yen(cycleExpense)} / 収支: ${yen(cycleBalance)}\nSMBC借金残高（元本）: ${yen(debtRemaining)}（年利${(smbcDebt.rate*100).toFixed(0)}%）\n今月の利息: ${yen(monthInterestTotal)} / 元本返済: ${yen(monthPrincipalTotal)}\n${completionMonths?`完済予測: あと約${completionMonths}ヶ月`:""}\n\n固定支出:\n${fixedSum}\n\n日常支出:\n${dailySum}\n\n週次予算vs実績:\n${weekSum}\n\n①収支の総評、②借金返済ペースと利息負担の評価、③週次予算の達成状況、④日常支出の傾向と改善アドバイス3点`;
         try{
           aiResult=await callClaude("家計管理の専門家として、借金返済中のユーザーに率直で建設的なアドバイスをしてください。利息負担と元本返済の違いも含めて評価してください。",prompt);
         }catch(err){aiResult="エラーが発生しました: "+err.message;}
         render();
+      };
+    },0);
+  }
+
+  else if(currentTab==="settings"){
+    const nw=calcNetWorth();
+    app.innerHTML=`
+      <div class="card" style="padding:17px;display:flex;flex-direction:column;gap:16px">
+        <div>
+          <div class="section-title">🏦 口座残高の設定</div>
+          <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">手元資金の現在残高を入力してください。純資産計算に使われます。</p>
+          ${accounts.map((a,i)=>`
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+              <span style="font-size:.78rem;min-width:72px;color:var(--ink)">${a.label}</span>
+              <input type="number" class="acc-input" data-i="${i}" value="${a.balance}" min="0" style="flex:1"/>
+              <span style="font-size:.72rem;color:#9a8e82">円</span>
+            </div>`).join("")}
+          <button class="pbtn" id="btnSaveAccounts" style="margin-top:4px;width:100%">口座残高を保存</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--cream)"/>
+        <div>
+          <div class="section-title">💳 負債残高の設定</div>
+          <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">各借金の現在残高・利率・月返済額を設定してください。</p>
+          ${debts.map((d,i)=>`
+            <div style="background:var(--cream);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+              <div style="font-size:.8rem;font-weight:600;color:${d.color||"var(--red)"};margin-bottom:8px">${d.label}</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                <div>
+                  <div class="lbl">残高（円）</div>
+                  <input type="number" class="debt-bal-input" data-i="${i}" value="${d.balance}" min="0"/>
+                </div>
+                <div>
+                  <div class="lbl">年利（%）</div>
+                  <input type="number" class="debt-rate-input" data-i="${i}" value="${(d.rate*100).toFixed(1)}" min="0" max="100" step="0.1"/>
+                </div>
+                <div>
+                  <div class="lbl">月返済額（円）</div>
+                  <input type="number" class="debt-pay-input" data-i="${i}" value="${d.monthlyPay}" min="0"/>
+                </div>
+              </div>
+            </div>`).join("")}
+          <button class="pbtn" id="btnSaveDebts" style="width:100%">負債情報を保存</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--cream)"/>
+        <div>
+          <div class="section-title">📊 現在の純資産サマリー</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+            <div class="card" style="padding:10px;text-align:center">
+              <div class="lbl" style="text-align:center">総資産</div>
+              <div style="font-weight:700;color:var(--blue)">${yen(nw.totalAssets)}</div>
+            </div>
+            <div class="card" style="padding:10px;text-align:center">
+              <div class="lbl" style="text-align:center">総負債</div>
+              <div style="font-weight:700;color:var(--red)">${yen(nw.totalDebt)}</div>
+            </div>
+          </div>
+          <div class="card" style="padding:10px;text-align:center;margin-top:7px;border-left:4px solid ${nw.netWorth>=0?"var(--green)":"var(--red)"}">
+            <div class="lbl" style="text-align:center">純資産</div>
+            <div style="font-size:1.3rem;font-weight:700;color:${nw.netWorth>=0?"var(--green)":"var(--red)"}">${nw.netWorth>=0?"":""} ${yen(nw.netWorth)}</div>
+            ${nw.netWorth<0?`<div style="font-size:.65rem;color:#9a8e82;margin-top:3px">債務超過</div>`:""}
+          </div>
+        </div>
+      </div>`;
+    setTimeout(()=>{
+      document.getElementById("btnSaveAccounts").onclick=async()=>{
+        document.querySelectorAll(".acc-input").forEach(inp=>{
+          const i=parseInt(inp.dataset.i);
+          accounts[i].balance=parseInt(inp.value)||0;
+        });
+        await saveMeta(); showFlash("口座残高を保存しました"); render();
+      };
+      document.getElementById("btnSaveDebts").onclick=async()=>{
+        document.querySelectorAll(".debt-bal-input").forEach(inp=>{
+          const i=parseInt(inp.dataset.i);
+          debts[i].balance=parseInt(inp.value)||0;
+        });
+        document.querySelectorAll(".debt-rate-input").forEach(inp=>{
+          const i=parseInt(inp.dataset.i);
+          debts[i].rate=parseFloat(inp.value)/100||0;
+        });
+        document.querySelectorAll(".debt-pay-input").forEach(inp=>{
+          const i=parseInt(inp.dataset.i);
+          debts[i].monthlyPay=parseInt(inp.value)||0;
+        });
+        await saveMeta(); showFlash("負債情報を保存しました"); render();
       };
     },0);
   }
