@@ -336,6 +336,7 @@ let savingsGoal=30000; // 月次貯蓄目標（デフォルト3万）
 let cycleKey=getCycleKey(todayStr()), currentTab="dash";
 let form={date:todayStr(),tag:"food",amount:"",memo:"",isIncome:false};
 let aiResult="", unsubs=[], ocrType="bank", ocrCands=[], ocrFiles=[], ocrProgress={cur:0,total:0};
+let chatHistory={}; // {cycleKey:[{role,text,ts}]}
 
 document.getElementById("btnLogin").onclick=async()=>{
   try{await signInWithPopup(auth,new GoogleAuthProvider());}
@@ -343,7 +344,7 @@ document.getElementById("btnLogin").onclick=async()=>{
 };
 document.getElementById("btnLogout").onclick=async()=>{
   unsubs.forEach(u=>u()); unsubs=[];
-  records=[]; smbcSnapshots=[]; budgets={};
+  records=[]; smbcSnapshots=[]; budgets={}; chatHistory={};
   await signOut(auth);
 };
 
@@ -380,6 +381,7 @@ function startSync(uid){
       if(d.accounts) accounts=d.accounts;
       if(d.smbcSnapshots) smbcSnapshots=d.smbcSnapshots;
       if(typeof d.savingsGoal==="number") savingsGoal=d.savingsGoal;
+      if(d.chatHistory) chatHistory=d.chatHistory;
       // 後方互換: 旧debtPrincipalPaidが存在してスナップショットが空の場合
       if(!d.smbcSnapshots && d.debtPrincipalPaid){
         const smbcDebt=debts.find(x=>x.id==="smbc");
@@ -395,7 +397,7 @@ function startSync(uid){
 async function saveMeta(){
   if(!currentUser) return;
   setSyncStatus("syncing");
-  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{budgets,debts,accounts,smbcSnapshots,savingsGoal});
+  await setDoc(doc(db,`users/${currentUser.uid}/meta/data`),{budgets,debts,accounts,smbcSnapshots,savingsGoal,chatHistory});
   setSyncStatus("ok");
 }
 async function addRecord(rec){
@@ -1051,29 +1053,279 @@ function render(){
   }
 
   else if(currentTab==="ai"){
+    const nw=calcNetWorth();
+    const movingSavings=records.filter(r=>r.tag==="moving").reduce((s,r)=>s+r.amount,0);
+    const subIds=["sub_ai","sub_entame","sub_info","sub_tool","subscription"];
+    const subTotal=subIds.reduce((s,id)=>s+(byTag[id]||0),0);
+    const infraAmt=(byTag["fixed"]||0)||16622;
+    const debtAmt=["debt","prepay","rakuten_pay"].reduce((s,id)=>s+(byTag[id]||0),0);
+    const varExp=cycleExpense-debtAmt-infraAmt-subTotal;
+    const disposable=cycleIncome-(infraAmt+subTotal+debtAmt);
+    const remaining=disposable-Math.max(0,varExp);
+    const monthChats=chatHistory[cycleKey]||[];
+    const memoKey=`memo_${cycleKey}`;
+    const memoVal=chatHistory[memoKey]||"";
+
+    // 財務コンテキスト（全ボタン・チャット共通）
+    const finCtx=`【現在の財務状況】
+給与月: ${cycleKey}（${start}〜${end}）
+収入: ${yen(cycleIncome)} / 支出: ${yen(cycleExpense)} / 収支: ${yen(cycleBalance)}
+理論的可処分所得: ${yen(disposable)} / 今月残余: ${yen(remaining)}
+SMBC借金残高: ${yen(debtRemaining)}（年利${(smbcDebt.rate*100).toFixed(0)}%）
+楽天分割残高: ${yen(debts.find(d=>d.id==="rakuten")?.balance||0)}（残${Math.ceil((debts.find(d=>d.id==="rakuten")?.balance||0)/6226)}回）
+総資産: ${yen(nw.totalAssets)} / 総負債: ${yen(nw.totalDebt)} / 純資産: ${yen(nw.netWorth)}
+サブスク月合計: ${yen(subTotal)} / 引越し積立: ${yen(movingSavings)}/¥500,000
+貯蓄目標: ${yen(savingsGoal)}/月
+週次予算vs実績:
+${weeks.map((w,i)=>`  ${w.label}: 予算${yen(cycleBudget[`w${i}`]||0)} / 実績${yen(weekActuals[i])}`).join("\n")}`;
+
     app.innerHTML=`
-      <div class="card" style="padding:17px;display:flex;flex-direction:column;gap:12px">
-        <div>
-          <div class="section-title" style="margin-bottom:3px">✦ AI家計アドバイス</div>
-          <p style="font-size:.7rem;color:#9a8e82">週次予算・借金返済ペース・利息負担も含めて分析します</p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+
+        <div class="card" style="padding:15px">
+          <div class="section-title" style="margin-bottom:10px">✦ AI分析・相談</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="aibtn" id="btnAI" style="text-align:left">📊 月次収支を総合分析する</button>
+            <button class="aibtn" id="btnWeekly" style="text-align:left;background:#1a5276">📅 今週の残余ペースを分析する</button>
+            <button class="aibtn" id="btnMoving" style="text-align:left;background:#1e8449">🏠 引越し積立の振り分けを提案してもらう</button>
+          </div>
+          ${aiResult?`<div style="background:#fafaf7;border:1px solid var(--border);border-radius:8px;padding:13px;font-size:.8rem;line-height:1.9;white-space:pre-wrap;margin-top:12px">${aiResult}</div>`:""}
         </div>
-        <button class="aibtn" id="btnAI">✦ AI分析を実行する</button>
-        ${aiResult?`<div style="background:#fafaf7;border:1px solid var(--border);border-radius:8px;padding:13px;font-size:.8rem;line-height:1.9;white-space:pre-wrap">${aiResult}</div>`:""}
+
+        <div class="card" style="padding:15px">
+          <div class="section-title" style="margin-bottom:4px">💬 自由相談チャット</div>
+          <p style="font-size:.7rem;color:#9a8e82;margin-bottom:10px">財務データを自動で読み込んで回答します。今月の相談履歴はエクスポート時にObsidianメモに含まれます。</p>
+          <div id="chatArea" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:4px">
+            ${monthChats.length===0?`<div style="text-align:center;font-size:.75rem;color:#bbb;padding:20px">まだ相談履歴がありません</div>`
+              :monthChats.map(m=>`
+              <div style="display:flex;flex-direction:column;gap:2px;align-items:${m.role==="user"?"flex-end":"flex-start"}">
+                <div style="max-width:85%;background:${m.role==="user"?"var(--ink)":"#f0ede8"};color:${m.role==="user"?"var(--paper)":"var(--ink)"};border-radius:${m.role==="user"?"12px 12px 3px 12px":"12px 12px 12px 3px"};padding:9px 13px;font-size:.78rem;line-height:1.7;white-space:pre-wrap">${m.text}</div>
+                <div style="font-size:.6rem;color:#bbb">${m.ts?new Date(m.ts).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):""}</div>
+              </div>`).join("")}
+          </div>
+          <div style="display:flex;gap:7px">
+            <textarea id="chatInput" placeholder="例：今月イベント1万円行っても大丈夫ですか？" style="flex:1;resize:none;height:60px;font-size:.78rem;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;background:#fff"></textarea>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <button class="pbtn" id="btnChat" style="height:100%;padding:0 14px;font-size:.75rem">送信</button>
+            </div>
+          </div>
+          ${monthChats.length>0?`<button id="btnClearChat" style="background:none;border:none;cursor:pointer;font-size:.68rem;color:#bbb;margin-top:6px;font-family:inherit">今月の履歴を削除</button>`:""}
+        </div>
+
+        <div class="card" style="padding:15px">
+          <div class="section-title" style="margin-bottom:8px">📝 今月の振り返りメモ</div>
+          <textarea id="memoInput" placeholder="今月の反省・気づき・来月に向けてのメモなど自由に記録してください" style="width:100%;resize:none;height:100px;font-size:.78rem;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;background:#fff">${memoVal}</textarea>
+          <button class="pbtn" id="btnSaveMemo" style="width:100%;margin-top:8px">メモを保存</button>
+        </div>
+
+        <div class="card" style="padding:15px">
+          <div class="section-title" style="margin-bottom:4px">📥 Obsidianエクスポート</div>
+          <p style="font-size:.7rem;color:#9a8e82;margin-bottom:10px">${cycleKey}のデータ・AI相談ログ・振り返りメモを.mdファイルで出力します</p>
+          <button class="pbtn" id="btnExport" style="width:100%;background:var(--blue)">📥 ${cycleKey}のメモをダウンロード</button>
+        </div>
+
       </div>`;
+
     setTimeout(()=>{
+      // ── 月次総合分析 ──
       document.getElementById("btnAI").onclick=async()=>{
         if(cycleRecs.length===0){aiResult="この月のデータがありません。";render();return;}
-        document.getElementById("btnAI").disabled=true;
-        document.getElementById("btnAI").textContent="分析中...";
+        const btn=document.getElementById("btnAI");
+        btn.disabled=true; btn.textContent="分析中...";
         const fixedSum=FIXED_TAGS.map(t=>`  ${t.label}: ${yen(byTag[t.id])}`).join("\n");
         const dailySum=DAILY_TAGS.map(t=>`  ${t.label}: ${yen(byTag[t.id])}`).join("\n");
-        const weekSum=weeks.map((w,i)=>`  ${w.label}: 予算${yen(cycleBudget[`w${i}`]||0)} / 実績${yen(weekActuals[i])}`).join("\n");
-        const prompt=`給与月: ${cycleKey}（${start}〜${end}）\n収入: ${yen(cycleIncome)} / 支出: ${yen(cycleExpense)} / 収支: ${yen(cycleBalance)}\nSMBC借金残高（元本）: ${yen(debtRemaining)}（年利${(smbcDebt.rate*100).toFixed(0)}%）\n今月の利息: ${yen(monthInterestTotal)} / 元本返済: ${yen(monthPrincipalTotal)}\n${completionMonths?`完済予測: あと約${completionMonths}ヶ月`:""}\n\n固定支出:\n${fixedSum}\n\n日常支出:\n${dailySum}\n\n週次予算vs実績:\n${weekSum}\n\n①収支の総評、②借金返済ペースと利息負担の評価、③週次予算の達成状況、④日常支出の傾向と改善アドバイス3点`;
-        try{
-          aiResult=await callClaude("家計管理の専門家として、借金返済中のユーザーに率直で建設的なアドバイスをしてください。利息負担と元本返済の違いも含めて評価してください。",prompt);
-        }catch(err){aiResult="エラーが発生しました: "+err.message;}
+        const prompt=`${finCtx}\n\n固定支出:\n${fixedSum}\n\n日常支出:\n${dailySum}\n\n①収支の総評、②借金返済ペースと利息負担の評価、③日常支出の傾向と改善アドバイス3点を率直に回答してください。`;
+        try{aiResult=await callClaude("家計管理の専門家として、借金返済中のユーザーに率直で建設的なアドバイスをしてください。",prompt,2000);}
+        catch(err){aiResult="エラー: "+err.message;}
         render();
       };
+
+      // ── 週次残余ペース分析 ──
+      document.getElementById("btnWeekly").onclick=async()=>{
+        const btn=document.getElementById("btnWeekly");
+        btn.disabled=true; btn.textContent="分析中...";
+        const today=new Date();
+        const endDate=new Date(end+"T00:00:00");
+        const daysLeft=Math.max(1,Math.ceil((endDate-today)/(1000*60*60*24)));
+        const weekSum=weeks.map((w,i)=>`  ${w.label}: 予算${yen(cycleBudget[`w${i}`]||0)} / 実績${yen(weekActuals[i])}`).join("\n");
+        const prompt=`${finCtx}\n\n今月の終了まで残り${daysLeft}日。今月の残余は${yen(remaining)}です。\n週次予算vs実績:\n${weekSum}\n\n①今週のペースで月末にいくら残るか具体的な数字で教えてください。②今週あと何円まで使えるかを示してください。③ペースが速ければ具体的な削減提案を1点だけ。`;
+        try{aiResult=await callClaude("家計管理の専門家として具体的な数字で簡潔に答えてください。",prompt,1500);}
+        catch(err){aiResult="エラー: "+err.message;}
+        render();
+      };
+
+      // ── 引越し積立提案 ──
+      document.getElementById("btnMoving").onclick=async()=>{
+        const btn=document.getElementById("btnMoving");
+        btn.disabled=true; btn.textContent="分析中...";
+        const prompt=`${finCtx}\n\n引越し積立状況: ${yen(movingSavings)} / 目標¥500,000（残り${yen(500000-movingSavings)}）\n今月の残余: ${yen(remaining)} / 貯蓄目標: ${yen(savingsGoal)}/月\n\n①今月いくら引越し積立に回すべきか具体的な金額を提案してください。②年内に50万貯めるには月いくら必要か計算してください。③注意点があれば1点だけ。`;
+        try{aiResult=await callClaude("家計管理の専門家として具体的な数字で答えてください。",prompt,1500);}
+        catch(err){aiResult="エラー: "+err.message;}
+        render();
+      };
+
+      // ── 自由相談チャット ──
+      const chatInput=document.getElementById("chatInput");
+      const chatArea=document.getElementById("chatArea");
+      async function sendChat(){
+        const text=chatInput.value.trim();
+        if(!text) return;
+        const btn=document.getElementById("btnChat");
+        btn.disabled=true; btn.textContent="送信中";
+        chatInput.value="";
+        const ts=new Date().toISOString();
+        if(!chatHistory[cycleKey]) chatHistory[cycleKey]=[];
+        chatHistory[cycleKey].push({role:"user",text,ts});
+        render();
+        // 直近5往復をコンテキストとして送る
+        const history=chatHistory[cycleKey];
+        const recentPairs=history.slice(-10);
+        const messages=recentPairs.map(m=>({role:m.role==="user"?"user":"assistant",content:m.text}));
+        // 最後のユーザーメッセージにfinCtxを付加
+        messages[messages.length-1].content=`${finCtx}\n\nユーザーの質問: ${text}`;
+        try{
+          const res=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({model:"claude-sonnet-4-5",max_tokens:1500,
+              system:"あなたは家計管理の専門家です。借金返済中のユーザーの財務データを踏まえて、具体的で率直なアドバイスをしてください。数字を使って簡潔に答えてください。",
+              messages})});
+          const data=await res.json();
+          const aiText=data.content?.map(b=>b.text||"").join("")||"応答がありませんでした";
+          chatHistory[cycleKey].push({role:"ai",text:aiText,ts:new Date().toISOString()});
+          await saveMeta();
+        }catch(err){
+          chatHistory[cycleKey].push({role:"ai",text:"エラーが発生しました: "+err.message,ts:new Date().toISOString()});
+        }
+        render();
+      }
+      document.getElementById("btnChat").onclick=sendChat;
+      chatInput.onkeydown=e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)) sendChat();};
+
+      // 履歴削除
+      const clearBtn=document.getElementById("btnClearChat");
+      if(clearBtn) clearBtn.onclick=async()=>{
+        if(!confirm("今月のチャット履歴を削除しますか？")) return;
+        delete chatHistory[cycleKey];
+        await saveMeta(); render();
+      };
+
+      // ── 振り返りメモ保存 ──
+      document.getElementById("btnSaveMemo").onclick=async()=>{
+        const memo=document.getElementById("memoInput").value;
+        chatHistory[memoKey]=memo;
+        await saveMeta(); showFlash("メモを保存しました");
+      };
+
+      // ── Obsidianエクスポート ──
+      document.getElementById("btnExport").onclick=()=>{
+        const nwSnap=calcNetWorth();
+        const chats=chatHistory[cycleKey]||[];
+        const memo=chatHistory[memoKey]||"";
+        const subRows=subs=>[...subs].sort((a,b)=>b.amt-a.amt).map(s=>`| ${s.label} | ¥${s.amt.toLocaleString()} |`).join("\n");
+        const allSubs=[
+          {label:"ABEMA",amt:1180},{label:"Apple One",amt:1980},{label:"Claude",amt:3400},
+          {label:"Gemini",amt:2900},{label:"LYP+Netflix",amt:1590},{label:"TickTick",amt:600},
+          {label:"YouTubeメンバーシップ",amt:120},{label:"YouTube Premium",amt:1280},
+          {label:"携帯+UNEXT",amt:4493},{label:"新聞",amt:4600},{label:"山水塾",amt:2500},
+          {label:"ビデオニュース",amt:1000},{label:"デイリー宮台",amt:3000},
+          {label:"KindleUnlimited",amt:980},{label:"OneSec",amt:166},{label:"Capcut",amt:825},
+        ];
+        const chatMd=chats.length===0?"記録なし":chats.map(m=>{
+          const time=m.ts?new Date(m.ts).toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}):"";
+          return m.role==="user"?`**Q (${time}):** ${m.text}`:`**A:** ${m.text}`;
+        }).join("\n\n");
+
+        const md=`---
+tags: [finance, monthly]
+date: ${todayStr()}
+month: ${cycleKey}
+---
+
+# 💰 財務記録 ${cycleKey}
+
+## 📆 運用チェック
+- [ ] 給与入力済み
+- [ ] 明細読込済み（銀行・PayPay・クレカ・Suica）
+- [ ] SMBC残高を月次記録した
+- [ ] クレカ翌月払い残高を更新した
+- [ ] 口座残高を更新した
+
+---
+
+## 📊 現在地（${todayStr()}時点）
+
+### 資産
+| 口座 | 残高 |
+|------|------|
+${accounts.map(a=>`| ${a.label} | ¥${a.balance.toLocaleString()} |`).join("\n")}
+| **総資産** | **¥${nwSnap.totalAssets.toLocaleString()}** |
+
+### 負債
+| 項目 | 残高 |
+|------|------|
+| SMBC借金（12%） | ¥${nwSnap.smbcRemaining.toLocaleString()} |
+| 楽天分割残 | ¥${nwSnap.rakutenRemaining.toLocaleString()} |
+${debts.filter(d=>d.id.startsWith("card_")).map(d=>`| ${d.label} | ¥${d.balance.toLocaleString()} |`).join("\n")}
+| **総負債** | **¥${nwSnap.totalDebt.toLocaleString()}** |
+| **純資産** | **${nwSnap.netWorth<0?"▲":""}¥${Math.abs(nwSnap.netWorth).toLocaleString()}** |
+
+---
+
+## 💸 今月の収支（${start}〜${end}）
+
+| 項目 | 金額 |
+|------|------|
+| 収入 | ¥${cycleIncome.toLocaleString()} |
+| 支出 | ¥${cycleExpense.toLocaleString()} |
+| 収支 | ¥${cycleBalance.toLocaleString()} |
+| 理論的可処分所得 | ¥${disposable.toLocaleString()} |
+| 今月の残余 | ¥${remaining.toLocaleString()} |
+
+### タグ別支出
+${[...FIXED_TAGS,...DAILY_TAGS].filter(t=>(byTag[t.id]||0)>0).map(t=>`| ${t.emoji} ${t.label} | ¥${(byTag[t.id]||0).toLocaleString()} |`).join("\n")||"記録なし"}
+
+---
+
+## 📱 サブスク一覧（月換算）
+
+| サービス | 月額 |
+|---------|------|
+${subRows(allSubs)}
+| **合計** | **¥${allSubs.reduce((s,x)=>s+x.amt,0).toLocaleString()}** |
+
+---
+
+## 💬 今月のAI相談ログ
+
+${chatMd}
+
+---
+
+## 📝 振り返りメモ
+
+${memo||"（記録なし）"}
+
+---
+
+## ✅ 来月に向けて
+
+- [ ] 
+- [ ] 
+- [ ] 
+
+---
+*→ 次月: [[finance_monthly_${(()=>{const [y,m]=cycleKey.split("-").map(Number);const nm=m===12?1:m+1;const ny=m===12?y+1:y;return `${ny}-${String(nm).padStart(2,"0")}`})()}]]*
+`;
+        const blob=new Blob([md],{type:"text/markdown;charset=utf-8"});
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=`finance_monthly_${cycleKey}.md`;
+        a.click();
+        showFlash(`${cycleKey}のメモをダウンロードしました`);
+      };
+
+      // チャットエリアを最下部にスクロール
+      const ca=document.getElementById("chatArea");
+      if(ca) ca.scrollTop=ca.scrollHeight;
     },0);
   }
 
@@ -1390,51 +1642,156 @@ function render(){
 
   else if(currentTab==="guide"){
     app.innerHTML=`
-      <div class="card" style="padding:17px;display:flex;flex-direction:column;gap:16px">
-        <div>
-          <div class="section-title">📅 給与サイクルのルール</div>
-          <p style="font-size:.78rem;line-height:1.8;color:#4a4035">給与日は毎月<strong>20日</strong>。「4月分」は<strong>3月20日〜4月19日</strong>として管理します。</p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">📆 運用ルーティン</div>
+          <div style="font-size:.76rem;line-height:1.8;color:#4a4035;display:flex;flex-direction:column;gap:10px">
+            <div style="background:#fefde7;border-left:3px solid var(--gold);padding:8px 12px;border-radius:0 6px 6px 0">
+              <div style="font-weight:600;margin-bottom:3px">毎日（1分）</div>
+              現金を使ったら✏️入力タブで「現金引き出し_食費 or その他」を入力
+            </div>
+            <div style="background:#eafaf1;border-left:3px solid var(--green);padding:8px 12px;border-radius:0 6px 6px 0">
+              <div style="font-weight:600;margin-bottom:3px">週1回（5分）</div>
+              ① 銀行口座・PayPay・クレカ・Suicaのスクショを撮る<br>
+              ② 📷明細読込タブで種別を選んでまとめてアップロード<br>
+              ③ 読み取り結果を確認・タグ修正して「追加する」<br>
+              ④ 📅週次予算タブで今週の進捗を確認<br>
+              ⑤ 予算超過していれば✦AIタブで相談
+            </div>
+            <div style="background:#ebf5fb;border-left:3px solid var(--blue);padding:8px 12px;border-radius:0 6px 6px 0">
+              <div style="font-weight:600;margin-bottom:3px">月1回（10分）</div>
+              ① 20日：給与を✏️入力タブで手動入力（💼給与タグ）<br>
+              ② 返済後：SMBCアプリで残高確認 → ⚙️設定タブで月次記録<br>
+              ③ カード引き落とし後：クレカ翌月払い残高を⚙️設定タブで更新<br>
+              ④ 各口座残高を⚙️設定タブで更新<br>
+              ⑤ ✦AIタブで月次総評を取得・振り返りメモを記入<br>
+              ⑥ 📥Obsidianエクスポートでその月のメモをダウンロード
+            </div>
+            <div style="background:#fdf0f0;border-left:3px solid var(--red);padding:8px 12px;border-radius:0 6px 6px 0">
+              <div style="font-weight:600;margin-bottom:3px">ボーナス時（6月・12月）</div>
+              ① ✏️入力タブでボーナスを入力（🎁ボーナスタグ）<br>
+              ② 繰上返済を実行したら💥繰上返済タグで記録<br>
+              ③ ⚙️設定タブでSMBC残高を更新<br>
+              ④ 📈年間タブで完済予測グラフが更新されたことを確認
+            </div>
+          </div>
         </div>
-        <div>
-          <div class="section-title">💳 借金返済の計算方法</div>
-          <p style="font-size:.78rem;line-height:1.8;color:#4a4035">年利<strong>10%</strong>（月利約0.833%）。返済額を入力すると自動で利息分と元本返済分に分解されます。<strong>元本残高 × 月利 = 利息</strong>、残りが元本返済分として残高から引かれます。</p>
-        </div>
-        <div>
-          <div class="section-title">💳 支払い手段別の入力ルール</div>
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">💡 支払い手段ルール</div>
           <table class="guide-table">
-            <thead><tr><th>手段</th><th>方法</th><th>頻度</th></tr></thead>
+            <thead><tr><th>手段</th><th>推奨用途</th></tr></thead>
             <tbody>
-              <tr><td>💬 PayPay</td><td>明細スクショ → OCR読込</td><td>週1回</td></tr>
-              <tr><td>🏦 銀行口座（デビット）</td><td>銀行明細スクショ → OCR読込</td><td>週1回</td></tr>
-              <tr><td>💳 クレジットカード</td><td>明細スクショ → OCR読込</td><td>週1回</td></tr>
-              <tr><td>🚃 Suica</td><td>Suica明細 → OCR読込</td><td>週1回</td></tr>
-              <tr><td>🏦 給与入金</td><td><strong>手動入力（✏️入力タブ）</strong></td><td>月1回</td></tr>
-              <tr><td>💴 現金</td><td>手動入力（現金引き出し_食費/その他）</td><td>その都度</td></tr>
+              <tr><td>🏦 SMBCデビット</td><td><strong>日常支出すべて（基本これ一本）</strong></td></tr>
+              <tr><td>💬 PayPay</td><td>少額・予算管理用</td></tr>
+              <tr><td>💴 現金</td><td>最小限。使ったらすぐ入力</td></tr>
+              <tr><td>💳 SMBC Olive / Amazon</td><td>最小限</td></tr>
+              <tr><td style="color:var(--red);font-weight:600">🟥 楽天カード</td><td style="color:var(--red);font-weight:600">封印推奨。来月残高が¥0になるまで使わない</td></tr>
             </tbody>
           </table>
         </div>
-        <div>
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">🗂️ このアプリでできること</div>
+          <table class="guide-table">
+            <thead><tr><th>タブ</th><th>できること</th></tr></thead>
+            <tbody>
+              <tr><td>📊 概要</td><td>純資産・可処分所得・SMBC残高・サブスク合計・来月引き落とし予測</td></tr>
+              <tr><td>📈 年間</td><td>ボーナス繰上返済シミュ・引越し積立進捗・完済予測グラフ</td></tr>
+              <tr><td>📅 週次予算</td><td>週ごとに予算設定して実績と比較。超過時アラート</td></tr>
+              <tr><td>✏️ 入力</td><td>給与・ボーナス・現金支出など手動入力</td></tr>
+              <tr><td>📷 明細読込</td><td>銀行・PayPay・クレカ・Suicaのスクショを複数枚まとめてAI読み取り</td></tr>
+              <tr><td>📋 明細</td><td>全記録の一覧・削除</td></tr>
+              <tr><td>✦ AI</td><td>月次総評・週次ペース分析・引越し積立提案・自由相談チャット・Obsidianエクスポート</td></tr>
+              <tr><td>⚙️ 設定</td><td>口座残高・負債残高・クレカ翌月払い・SMBC月次残高の記録</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">📷 明細読込の使い方</div>
+          <table class="guide-table" style="margin-bottom:12px">
+            <thead><tr><th>種別</th><th>読み取る内容</th><th>自動除外</th></tr></thead>
+            <tbody>
+              <tr><td>🏦 銀行口座明細</td><td>引き落とし・支払い全般</td><td>給与入金・ATM出金。PayPay/Suicaチャージは残高に自動加算</td></tr>
+              <tr><td>💬 PayPay明細</td><td>PayPayでの支払い</td><td>チャージ・送金・受取</td></tr>
+              <tr><td>💳 クレジット明細</td><td>カードでの支払い</td><td>繰越残高・ポイント・Suicaチャージ</td></tr>
+              <tr><td>🚃 Suica明細</td><td>乗車・ショッピング</td><td>チャージ行</td></tr>
+            </tbody>
+          </table>
+          <div style="font-size:.75rem;line-height:1.9;color:#4a4035">
+            <strong>手順：</strong>①種類を選ぶ → ②複数枚まとめて選択 → ③進捗バーが完了するまで待つ → ④結果確認・タグ修正 → ⑤「追加する」
+          </div>
+        </div>
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">✏️ 手動入力が必要なもの</div>
+          <table class="guide-table">
+            <thead><tr><th>内容</th><th>タグ</th><th>タイミング</th></tr></thead>
+            <tbody>
+              <tr><td>給与（手取り）</td><td>💼 給与</td><td>毎月20日</td></tr>
+              <tr><td>ボーナス</td><td>🎁 ボーナス</td><td>6月・12月</td></tr>
+              <tr><td>SMBC借金返済</td><td>💳 借金返済(SMBC)</td><td>毎月返済後</td></tr>
+              <tr><td>楽天分割返済</td><td>🟠 楽天分割返済</td><td>毎月返済後</td></tr>
+              <tr><td>繰上返済</td><td>💥 繰上返済</td><td>ボーナス時</td></tr>
+              <tr><td>現金支出（食費）</td><td>🍱 現金引き出し_食費</td><td>使ったとき</td></tr>
+              <tr><td>現金支出（その他）</td><td>💴 現金引き出し_その他</td><td>使ったとき</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">⚙️ 設定タブの使い方</div>
+          <div style="font-size:.76rem;line-height:1.9;color:#4a4035;display:flex;flex-direction:column;gap:8px">
+            <div><strong>口座残高（月1回）</strong><br>月末または月初に各口座の残高を確認して入力・保存。概要タブの純資産に反映されます。</div>
+            <div><strong>SMBC残高の月次記録（月1回・最重要）</strong><br>返済後にSMBCアプリで残高確認 → 月次記録に入力して保存。2ヶ月分たまると概要タブに「前月比の返済内訳（利息/元本）」が自動表示されます。誤記録は「✕」で削除して再入力できます。</div>
+            <div><strong>クレカ翌月払いの更新（月1回）</strong><br>カード引き落とし後に各カードの残高を更新。純資産の計算に反映されます。</div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:17px">
           <div class="section-title">🚫 二重計上を防ぐルール</div>
           <table class="guide-table">
             <thead><tr><th>取引</th><th>扱い</th></tr></thead>
             <tbody>
-              <tr><td>銀行→PayPayチャージ</td><td style="color:var(--red);font-weight:600">読み込まない（資金移動）</td></tr>
-              <tr><td>銀行/クレカ→Suicaチャージ</td><td style="color:var(--red);font-weight:600">読み込まない（資金移動）</td></tr>
-              <tr><td>ATM現金引き出し</td><td style="color:var(--red);font-weight:600">読み込まない（現金で別途入力）</td></tr>
-              <tr><td>クレカの銀行引き落とし</td><td style="color:var(--red);font-weight:600">読み込まない（クレカ明細側で入力済）</td></tr>
-              <tr><td>給与振込</td><td style="color:var(--green);font-weight:600">OCR読込で記録</td></tr>
+              <tr><td>銀行→PayPayチャージ</td><td style="color:var(--green);font-weight:600">銀行明細OCRで自動検出 → PayPay残高に加算・支出記録なし</td></tr>
+              <tr><td>銀行→Suicaチャージ</td><td style="color:var(--green);font-weight:600">銀行明細OCRで自動検出 → Suica残高に加算・支出記録なし</td></tr>
+              <tr><td>クレカの銀行引き落とし</td><td style="color:var(--red)">読み込まない（クレカ明細側で入力済み）</td></tr>
+              <tr><td>ATM現金引き出し</td><td style="color:var(--red)">読み込まない（現金引き出しタグで手動入力）</td></tr>
+              <tr><td>給与振込</td><td style="color:var(--red)">読み込まない（手動入力）</td></tr>
             </tbody>
           </table>
         </div>
-        <div style="background:#fefde7;border:1px solid #f0d060;border-radius:8px;padding:11px 13px;font-size:.76rem;line-height:1.8;color:#5a4a00">
-          <strong>💡 週1ルーティン（目安5分）</strong><br>
-          ① 銀行口座・PayPay・クレカ・Suicaの明細スクショを撮る<br>
-          ② 📷 明細読込タブで1枚ずつ読み込む<br>
-          ③ 週次予算タブで進捗を確認<br>
-          ④ ズレがあればAI分析で原因チェック<br>
-          ⑤ 給与日に✏️入力タブで給与を手動入力<br>
-          ⑥ 月末に⚙️設定タブで口座残高を更新
+
+        <div class="card" style="padding:17px">
+          <div class="section-title">💰 概要タブの見方</div>
+          <div style="font-size:.75rem;line-height:1.9;color:#4a4035;display:flex;flex-direction:column;gap:10px">
+            <div>
+              <div style="font-weight:600;margin-bottom:4px">純資産の計算式</div>
+              <div style="background:var(--cream);border-radius:6px;padding:8px 12px;font-size:.72rem;line-height:2">
+                総資産（口座残高合計）<br>
+                − SMBC借金残高<br>
+                − 楽天分割残高<br>
+                − クレカ翌月払い残高（3カード合計）<br>
+                <strong>= 純資産（マイナスなら債務超過）</strong>
+              </div>
+            </div>
+            <div>
+              <div style="font-weight:600;margin-bottom:4px">可処分所得の計算式</div>
+              <div style="background:var(--cream);border-radius:6px;padding:8px 12px;font-size:.72rem;line-height:2">
+                今月の収入<br>
+                − インフラ固定費 − サブスク合計 − 借金返済合計<br>
+                <strong>= 理論的可処分所得</strong><br>
+                − 今月の変動支出（実績）<br>
+                <strong>= 今月の残余</strong><br>
+                − 来月クレカ引き落とし予測<br>
+                <strong>= 引き落とし後の実質残余</strong>
+              </div>
+            </div>
+          </div>
         </div>
+
       </div>`;
   }
 }
