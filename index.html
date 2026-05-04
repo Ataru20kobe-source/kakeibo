@@ -126,17 +126,23 @@
     <div class="section-title">📷 明細読込</div>
     <div class="lbl" style="margin-bottom:8px">① 明細の種類を選ぶ</div>
     <div class="ocr-type-grid" id="ocrTypeGrid"></div>
-    <div class="lbl" style="margin-bottom:6px">② 画像をタップして選択</div>
+    <div class="lbl" style="margin-bottom:6px">② 画像を選択（複数枚OK）</div>
     <div class="ocr-upload-area" id="ocrUploadArea">
       <div id="ocrPlaceholder">
         <div style="font-size:2rem;margin-bottom:8px">📂</div>
         <div style="font-size:.82rem;color:#8a7e72;font-weight:600">ここをタップして画像を選択</div>
-        <div style="font-size:.68rem;color:#aaa;margin-top:4px">スクショ・レシート写真など</div>
+        <div style="font-size:.68rem;color:#aaa;margin-top:4px">複数枚まとめて選択できます</div>
       </div>
-      <img id="ocrPreview" style="display:none;max-width:100%;max-height:200px;object-fit:contain;border-radius:6px"/>
+      <div id="ocrThumbRow" style="display:none;flex-wrap:wrap;gap:6px;justify-content:center"></div>
     </div>
-    <input type="file" id="ocrFileInput" accept="image/*" style="display:none"/>
-    <div class="ocr-loading" id="ocrLoadingMsg">🔍 AIが明細を読み取り中...<br><span style="font-size:.68rem;color:#aaa">少し時間がかかります</span></div>
+    <input type="file" id="ocrFileInput" accept="image/*" multiple style="display:none"/>
+    <div class="ocr-loading" id="ocrLoadingMsg" style="display:none">
+      <div id="ocrProgressText" style="font-size:.85rem;color:var(--gold);font-weight:600;margin-bottom:6px">🔍 読み取り中...</div>
+      <div style="background:var(--cream);border-radius:4px;height:8px;overflow:hidden;margin:0 20px">
+        <div id="ocrProgressBar" style="height:100%;background:var(--gold);border-radius:4px;width:0%;transition:width .4s ease"></div>
+      </div>
+      <div style="font-size:.68rem;color:#aaa;margin-top:6px">しばらくお待ちください</div>
+    </div>
     <div class="ocr-error" id="ocrErrorMsg"></div>
   </div>
   <div id="ocrResultPanel" style="display:none">
@@ -244,12 +250,10 @@ const TAG_MAP  = Object.fromEntries(ALL_TAGS.map(t => [t.id, t]));
 const EXPENSE_TAG_IDS = EXPENSE_TAGS.map(t => t.id).join("|");
 
 const OCR_TYPES = [
-  {id:"paypay",  label:"PayPay明細",          hint:"チャージ・送金・受取は自動除外"},
-  {id:"debit",   label:"デビット明細",        hint:"給与入金・ATM・振替・Suicaチャージは除外"},
-  {id:"credit",  label:"クレジット明細",      hint:"固定費・サブスクが中心。Suicaチャージは除外"},
-  {id:"suica",   label:"Suica明細",           hint:"乗車・ショッピングのみ。チャージ行は除外"},
-  {id:"salary",  label:"銀行口座（給与入金）",hint:"給与入金行だけ抽出、手取り額を収入として記録"},
-  {id:"receipt", label:"レシート",            hint:"現金払いの領収書"},
+  {id:"bank",    label:"銀行口座明細",   emoji:"🏦", hint:"給与は手動入力。PayPay/Suicaチャージは残高に自動加算"},
+  {id:"paypay",  label:"PayPay明細",    emoji:"💬", hint:"チャージ・送金・受取は自動除外"},
+  {id:"credit",  label:"クレジット明細", emoji:"💳", hint:"固定費・サブスクが中心。Suicaチャージは除外"},
+  {id:"suica",   label:"Suica明細",     emoji:"🚃", hint:"乗車・ショッピングのみ。チャージ行は除外"},
 ];
 
 const yen = n => "¥" + Number(n||0).toLocaleString("ja-JP");
@@ -331,7 +335,7 @@ let accounts=[...DEFAULT_ACCOUNTS.map(a=>({...a}))];
 let savingsGoal=30000; // 月次貯蓄目標（デフォルト3万）
 let cycleKey=getCycleKey(todayStr()), currentTab="dash";
 let form={date:todayStr(),tag:"food",amount:"",memo:"",isIncome:false};
-let aiResult="", unsubs=[], ocrType="paypay", ocrCands=[];
+let aiResult="", unsubs=[], ocrType="bank", ocrCands=[], ocrFiles=[], ocrProgress={cur:0,total:0};
 
 document.getElementById("btnLogin").onclick=async()=>{
   try{await signInWithPopup(auth,new GoogleAuthProvider());}
@@ -461,7 +465,7 @@ function initOCR(){
     const btn=document.createElement("button");
     btn.className="ocr-type-card"+(t.id===ocrType?" selected":"");
     btn.dataset.ocrId=t.id;
-    btn.innerHTML=`<div class="title">${t.label}</div><div class="hint">${t.hint}</div>`;
+    btn.innerHTML=`<div class="title">${t.emoji} ${t.label}</div><div class="hint">${t.hint}</div>`;
     btn.onclick=()=>{
       ocrType=t.id;
       document.querySelectorAll(".ocr-type-card").forEach(c=>c.classList.remove("selected"));
@@ -473,70 +477,138 @@ function initOCR(){
   document.getElementById("ocrUploadArea").onclick=()=>document.getElementById("ocrFileInput").click();
 
   document.getElementById("ocrFileInput").onchange=async(e)=>{
-    const file=e.target.files[0]; if(!file) return;
-    const reader=new FileReader();
-    reader.onload=async(ev)=>{
-      const dataUrl=ev.target.result;
-      document.getElementById("ocrPlaceholder").style.display="none";
-      const preview=document.getElementById("ocrPreview");
-      preview.src=dataUrl; preview.style.display="block";
-      document.getElementById("ocrLoadingMsg").style.display="block";
-      document.getElementById("ocrErrorMsg").textContent="";
-      document.getElementById("ocrResultPanel").style.display="none";
+    const files=Array.from(e.target.files);
+    if(!files.length) return;
+    ocrFiles=files;
 
-      const b64=dataUrl.split(",")[1];
-      const mediaType=file.type||"image/jpeg";
-      const isSalary=ocrType==="salary";
-      const typeInfo=OCR_TYPES.find(t=>t.id===ocrType);
+    // サムネイル表示
+    const thumbRow=document.getElementById("ocrThumbRow");
+    thumbRow.innerHTML=""; thumbRow.style.display="flex";
+    document.getElementById("ocrPlaceholder").style.display="none";
+    files.forEach(f=>{
+      const img=document.createElement("img");
+      img.style.cssText="width:60px;height:60px;object-fit:cover;border-radius:5px;border:1px solid var(--border)";
+      const fr=new FileReader();
+      fr.onload=ev=>img.src=ev.target.result;
+      fr.readAsDataURL(f);
+      thumbRow.appendChild(img);
+    });
 
-      const system=isSalary
-        ?`あなたは家計簿AIです。銀行口座の明細画像から「給与」「給与振込」「賞与」などの収入入金だけを抽出しJSON配列のみを返してください。ATM・振替・引き落とし・チャージは除外。フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"給与","suggestedTag":"salary","isIncome":true}] 日付不明は${todayStr()}。金額は円の整数。`
-        :`あなたは家計簿AIです。${typeInfo.label}の画像から実際の支払い取引だけを抽出しJSON配列のみを返してください。説明文やコードブロック記号は不要。
-除外ルール:
-- PayPay: チャージ・送金・受取は除外
-- デビット: 給与入金・ATM引き出し・口座振替・Suicaチャージは除外
-- クレジット: 繰越残高・ポイント・支払い合計行・Suicaチャージは除外
-- Suica: チャージ行は除外（乗車・ショッピングのみ抽出）
-フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"${EXPENSE_TAG_IDS}","isIncome":false}]
-タグ選択の目安:
-- 外食・定食屋→food
-- コンビニ飲食→food_cvs
-- スーパー・ドラッグストア→daily_goods
-- 衣服・美容院→fashion
-- 書籍・学習→education
-- 病院・薬→medical
-- 飲み会・贈り物→social
-- Netflix・Spotify等→subscription
-- 家賃・光熱費→fixed
-- 借金返済→debt
-- Suica乗車・電車→other_exp
-- その他→other_exp
-日付不明は${todayStr()}。金額は円の整数。`;
+    // ローディング開始
+    document.getElementById("ocrLoadingMsg").style.display="block";
+    document.getElementById("ocrErrorMsg").textContent="";
+    document.getElementById("ocrResultPanel").style.display="none";
 
-      const userContent=[
-        {type:"image",source:{type:"base64",media_type:mediaType,data:b64}},
-        {type:"text",text:`この${typeInfo.label}から取引を全て抽出してJSON配列で返してください。`}
-      ];
+    const typeInfo=OCR_TYPES.find(t=>t.id===ocrType);
+    const allCands=[];
+    let chargePaypayTotal=0, chargeSuicaTotal=0;
+
+    for(let i=0;i<files.length;i++){
+      // 進捗更新
+      const pText=document.getElementById("ocrProgressText");
+      const pBar=document.getElementById("ocrProgressBar");
+      if(pText) pText.textContent=`🔍 ${i+1}/${files.length}枚目を読み取り中...`;
+      if(pBar) pBar.style.width=`${Math.round((i/files.length)*100)}%`;
 
       try{
-        const text=await callClaude(system,userContent);
+        const b64=await fileToB64(files[i]);
+        const mediaType=files[i].type||"image/jpeg";
+
+        // 種別ごとのシステムプロンプト
+        let system="";
+        if(ocrType==="bank"){
+          system=`あなたは家計簿AIです。銀行口座の明細画像から取引を抽出しJSON配列のみを返してください。
+除外ルール:
+- 給与・賞与入金は除外（手動入力するため）
+- ATM出金・現金引き出しは除外
+- 口座振替（自動引き落とし以外）は除外
+チャージ処理（JSONに含めず別フィールドで返す）:
+- PayPayチャージは charge_paypay フィールドに合計額を整数で返す
+- Suicaチャージは charge_suica フィールドに合計額を整数で返す
+残りの支払い取引はtransactionsフィールドの配列で返す。
+フォーマット:{"charge_paypay":数値または0,"charge_suica":数値または0,"transactions":[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"タグID","isIncome":false}]}
+タグID例: food/food_cvs/daily_goods/fashion/transport/fixed/medical/social/education/karate/event/sub_ai/sub_entame/sub_info/sub_tool/other_exp
+日付不明は${todayStr()}。金額は円の整数。説明文不要。`;
+        } else if(ocrType==="paypay"){
+          system=`あなたは家計簿AIです。PayPay明細の画像から実際の支払い取引だけを抽出しJSON配列のみを返してください。
+除外ルール: チャージ・送金・受取・ポイント還元は除外。支払いのみ抽出。
+フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"タグID","isIncome":false}]
+タグID例: food/food_cvs/daily_goods/fashion/transport/fixed/medical/social/education/karate/event/other_exp
+日付不明は${todayStr()}。金額は円の整数。説明文・コードブロック不要。`;
+        } else if(ocrType==="credit"){
+          system=`あなたは家計簿AIです。クレジットカード明細の画像から実際の支払い取引だけを抽出しJSON配列のみを返してください。
+除外ルール: 繰越残高・ポイント・支払い合計行・Suicaチャージ・手数料行は除外。
+フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"タグID","isIncome":false}]
+タグID例: food/food_cvs/daily_goods/fashion/transport/fixed/medical/social/education/sub_ai/sub_entame/sub_info/sub_tool/karate/event/other_exp
+日付不明は${todayStr()}。金額は円の整数。説明文・コードブロック不要。`;
+        } else if(ocrType==="suica"){
+          system=`あなたは家計簿AIです。Suica明細の画像から乗車・ショッピング取引だけを抽出しJSON配列のみを返してください。
+除外ルール: チャージ行は除外。乗車（入場・出場）とショッピングのみ抽出。
+フォーマット:[{"date":"YYYY-MM-DD","amount":数値,"memo":"内容","suggestedTag":"タグID","isIncome":false}]
+タグID例: transport/food/food_cvs/daily_goods/other_exp
+日付不明は${todayStr()}。金額は円の整数。説明文・コードブロック不要。`;
+        }
+
+        const userContent=[
+          {type:"image",source:{type:"base64",media_type:mediaType,data:b64}},
+          {type:"text",text:`この${typeInfo.label}から取引を抽出してください。`}
+        ];
+
+        const text=await callClaude(system, userContent, 3000);
         const clean=text.replace(/```json|```/g,"").trim();
-        ocrCands=JSON.parse(clean).map((c,i)=>({...c,_key:i,_sel:true}));
-        renderOCRResults();
+
+        if(ocrType==="bank"){
+          // 銀行明細はネスト構造
+          const parsed=JSON.parse(clean);
+          chargePaypayTotal+=parsed.charge_paypay||0;
+          chargeSuicaTotal+=parsed.charge_suica||0;
+          (parsed.transactions||[]).forEach((c,j)=>allCands.push({...c,_key:allCands.length,_sel:true,_src:`${i+1}枚目`}));
+        } else {
+          const parsed=JSON.parse(clean);
+          parsed.forEach((c,j)=>allCands.push({...c,_key:allCands.length,_sel:true,_src:`${i+1}枚目`}));
+        }
       } catch(err){
-        document.getElementById("ocrErrorMsg").textContent="読み取りに失敗しました: "+err.message;
+        document.getElementById("ocrErrorMsg").textContent+=`${i+1}枚目の読み取り失敗: ${err.message}　`;
       }
-      document.getElementById("ocrLoadingMsg").style.display="none";
-    };
-    reader.readAsDataURL(file);
+    }
+
+    // 進捗完了
+    const pBar=document.getElementById("ocrProgressBar");
+    if(pBar) pBar.style.width="100%";
+    const pText=document.getElementById("ocrProgressText");
+    if(pText) pText.textContent=`✓ ${files.length}枚の読み取り完了`;
+
+    // PayPay・Suicaチャージの自動残高加算
+    if(chargePaypayTotal>0||chargeSuicaTotal>0){
+      const ppIdx=accounts.findIndex(a=>a.id==="paypay");
+      const scIdx=accounts.findIndex(a=>a.id==="suica");
+      if(ppIdx>=0&&chargePaypayTotal>0) accounts[ppIdx].balance+=chargePaypayTotal;
+      if(scIdx>=0&&chargeSuicaTotal>0) accounts[scIdx].balance+=chargeSuicaTotal;
+      await saveMeta();
+      const msgs=[];
+      if(chargePaypayTotal>0) msgs.push(`PayPay +${yen(chargePaypayTotal)}`);
+      if(chargeSuicaTotal>0) msgs.push(`Suica +${yen(chargeSuicaTotal)}`);
+      document.getElementById("ocrErrorMsg").textContent=
+        `💰 チャージ検出：${msgs.join("・")} → 残高に自動加算しました`;
+      document.getElementById("ocrErrorMsg").style.color="var(--green)";
+    }
+
+    document.getElementById("ocrLoadingMsg").style.display="none";
+    ocrCands=allCands;
+    if(ocrCands.length>0) renderOCRResults();
+    else if(!document.getElementById("ocrErrorMsg").textContent)
+      document.getElementById("ocrErrorMsg").textContent="取引が見つかりませんでした。";
   };
 
   document.getElementById("ocrCancelBtn").onclick=()=>{
-    ocrCands=[];
+    ocrCands=[]; ocrFiles=[];
     document.getElementById("ocrResultPanel").style.display="none";
-    document.getElementById("ocrPreview").style.display="none";
+    document.getElementById("ocrThumbRow").style.display="none";
+    document.getElementById("ocrThumbRow").innerHTML="";
     document.getElementById("ocrPlaceholder").style.display="block";
     document.getElementById("ocrFileInput").value="";
+    document.getElementById("ocrErrorMsg").textContent="";
+    document.getElementById("ocrErrorMsg").style.color="var(--red)";
   };
 
   document.getElementById("ocrCommitBtn").onclick=async()=>{
@@ -547,31 +619,59 @@ function initOCR(){
       await addRecord({date:c.date,tag:c.suggestedTag||"other_exp",amount:c.amount,memo:c.memo,isIncome:c.isIncome||false});
     }
     showFlash(`${toAdd.length}件追加しました！`);
-    ocrCands=[];
+    ocrCands=[]; ocrFiles=[];
     document.getElementById("ocrResultPanel").style.display="none";
-    document.getElementById("ocrPreview").style.display="none";
+    document.getElementById("ocrThumbRow").style.display="none";
+    document.getElementById("ocrThumbRow").innerHTML="";
     document.getElementById("ocrPlaceholder").style.display="block";
     document.getElementById("ocrFileInput").value="";
+    document.getElementById("ocrErrorMsg").textContent="";
+    document.getElementById("ocrErrorMsg").style.color="var(--red)";
     document.getElementById("ocrCommitBtn").disabled=false;
   };
+}
+
+function fileToB64(file){
+  return new Promise((res,rej)=>{
+    const fr=new FileReader();
+    fr.onload=ev=>res(ev.target.result.split(",")[1]);
+    fr.onerror=rej;
+    fr.readAsDataURL(file);
+  });
 }
 
 function renderOCRResults(){
   const list=document.getElementById("ocrCandList");
   list.innerHTML="";
+  const ctrlRow=document.createElement("div");
+  ctrlRow.style.cssText="display:flex;gap:6px;margin-bottom:8px";
+  ctrlRow.innerHTML=`
+    <button id="ocrSelAll" style="background:var(--cream);border:1px solid var(--border);border-radius:4px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.7rem">全選択</button>
+    <button id="ocrSelNone" style="background:var(--cream);border:1px solid var(--border);border-radius:4px;padding:3px 9px;cursor:pointer;font-family:inherit;font-size:.7rem">全解除</button>
+    <span style="color:#9a8e82;padding:3px 0;font-size:.7rem">${ocrCands.length}件検出</span>`;
+  list.appendChild(ctrlRow);
+  ctrlRow.querySelector("#ocrSelAll").onclick=()=>{ocrCands.forEach(c=>c._sel=true);renderOCRResults();};
+  ctrlRow.querySelector("#ocrSelNone").onclick=()=>{ocrCands.forEach(c=>c._sel=false);renderOCRResults();};
   ocrCands.forEach((c,i)=>{
     const t=TAG_MAP[c.suggestedTag]||TAG_MAP["other_exp"];
     const item=document.createElement("div");
     item.className="cand-item";
     item.innerHTML=`
       <input type="checkbox" class="cand-check" ${c._sel?"checked":""} data-i="${i}"/>
-      <span style="color:#9a8e82;min-width:78px;flex-shrink:0;font-size:.7rem">${c.date}</span>
-      <span class="tag-chip" style="background:${t.bg};color:${t.color};flex-shrink:0">${t.emoji} ${t.label}</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7a6e62">${c.memo}</span>
-      <span style="font-weight:600;color:${c.isIncome?"var(--blue)":"var(--red)"};flex-shrink:0">${c.isIncome?"+":"−"}${yen(c.amount)}</span>
-      <select data-i="${i}" style="width:110px;flex-shrink:0;font-size:.65rem;padding:3px 4px;font-family:inherit;border:1px solid var(--border);border-radius:4px">
-        ${ALL_TAGS.map(tt=>`<option value="${tt.id}"${c.suggestedTag===tt.id?" selected":""}>${tt.emoji} ${tt.label}</option>`).join("")}
-      </select>`;
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+          <span style="color:#9a8e82;font-size:.68rem">${c.date}</span>
+          ${c._src?`<span style="font-size:.6rem;color:#bbb">${c._src}</span>`:""}
+          <span class="tag-chip" style="background:${t.bg};color:${t.color}">${t.emoji} ${t.label}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;margin-top:3px">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7a6e62;font-size:.74rem">${c.memo}</span>
+          <span style="font-weight:600;color:${c.isIncome?"var(--blue)":"var(--red)"};white-space:nowrap">${c.isIncome?"+":"−"}${yen(c.amount)}</span>
+        </div>
+        <select data-i="${i}" style="width:100%;font-size:.65rem;padding:3px 4px;font-family:inherit;border:1px solid var(--border);border-radius:4px;margin-top:3px">
+          ${ALL_TAGS.map(tt=>`<option value="${tt.id}"${c.suggestedTag===tt.id?" selected":""}>${tt.emoji} ${tt.label}</option>`).join("")}
+        </select>
+      </div>`;
     item.querySelector(".cand-check").onchange=ev=>{
       ocrCands[i]._sel=ev.target.checked;
       document.getElementById("ocrCommitBtn").textContent=`追加する（${ocrCands.filter(c=>c._sel).length}件）`;
