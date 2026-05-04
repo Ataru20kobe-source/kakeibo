@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>家計簿 | Ataru</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='30' fill='%231a1510'/><path d='M32,32 L32,4 A28,28 0 0,1 56,46 Z' fill='%232980b9' opacity='0.9'/><path d='M32,32 L56,46 A28,28 0 0,1 20,59 Z' fill='%23e74c3c' opacity='0.85'/><path d='M32,32 L20,59 A28,28 0 0,1 6,19 Z' fill='%23d4a017' opacity='0.9'/><path d='M32,32 L6,19 A28,28 0 0,1 32,4 Z' fill='%2327ae60' opacity='0.85'/><circle cx='32' cy='32' r='12' fill='%231a1510'/><rect x='27' y='25' width='3' height='12' rx='1' fill='%232980b9'/><rect x='31.5' y='28' width='3' height='9' rx='1' fill='%23e74c3c'/><rect x='36' y='26' width='3' height='11' rx='1' fill='%23d4a017'/><rect x='40.5' y='30' width='3' height='7' rx='1' fill='%2327ae60'/></svg>"/>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600;700&display=swap');
   :root {
@@ -75,9 +76,26 @@
 <body>
 
 <div id="loginScreen">
-  <div style="text-align:center">
-    <h1 style="font-size:2rem;font-weight:700;letter-spacing:.1em">家計簿</h1>
-    <p style="font-size:.75rem;color:#8a7e72;margin-top:4px;letter-spacing:.12em">KAKEIBO</p>
+  <div style="text-align:center;margin-bottom:8px">
+    <svg width="220" height="88" viewBox="0 0 440 176" role="img" style="display:inline-block">
+      <title>家計簿 KAKEIBO</title>
+      <desc>円グラフと棒グラフを組み合わせたロゴマーク</desc>
+      <circle cx="88" cy="88" r="58" fill="none" stroke="#ccc0ae" stroke-width="0.5"/>
+      <path d="M88,88 L88,30 A58,58 0 0,1 138,117 Z" fill="#1a5276" opacity="0.9"/>
+      <path d="M88,88 L138,117 A58,58 0 0,1 60,137 Z" fill="#c0392b" opacity="0.85"/>
+      <path d="M88,88 L60,137 A58,58 0 0,1 32,69 Z" fill="#b07c28" opacity="0.88"/>
+      <path d="M88,88 L32,69 A58,58 0 0,1 88,30 Z" fill="#1e8449" opacity="0.85"/>
+      <circle cx="88" cy="88" r="26" fill="#f6f1ea"/>
+      <rect x="77" y="74" width="5" height="22" rx="1.5" fill="#1a5276" opacity="0.9"/>
+      <rect x="84" y="79" width="5" height="17" rx="1.5" fill="#c0392b" opacity="0.9"/>
+      <rect x="91" y="76" width="5" height="20" rx="1.5" fill="#b07c28" opacity="0.9"/>
+      <rect x="98" y="82" width="5" height="14" rx="1.5" fill="#1e8449" opacity="0.9"/>
+      <line x1="74" y1="97" x2="106" y2="97" stroke="#ccc0ae" stroke-width="0.5"/>
+      <text x="270" y="66" text-anchor="middle" font-family="'Noto Serif JP',Georgia,serif" font-size="11" font-weight="500" fill="#8a7e72" letter-spacing="6">家　計　簿</text>
+      <text x="270" y="108" text-anchor="middle" font-family="Georgia,serif" font-size="30" font-weight="400" fill="#1a1510" letter-spacing="8">KAKEIBO</text>
+      <line x1="166" y1="120" x2="374" y2="120" stroke="#ccc0ae" stroke-width="0.5"/>
+      <text x="270" y="140" text-anchor="middle" font-family="Georgia,serif" font-size="9" font-weight="400" fill="#9a8e82" letter-spacing="5">PERSONAL FINANCE TRACKER</text>
+    </svg>
   </div>
   <div class="card" style="padding:28px 24px;max-width:320px;width:90%;text-align:center">
     <p style="font-size:.82rem;color:#6a6060;margin-bottom:20px;line-height:1.7">Googleアカウントでログインして<br>家計を管理しましょう</p>
@@ -89,10 +107,23 @@
 </div>
 
 <div id="mainScreen">
-  <div style="background:var(--ink);padding:14px 16px;display:flex;align-items:center;justify-content:space-between">
-    <div style="display:flex;align-items:baseline;gap:10px">
-      <h1 style="color:var(--paper);font-size:1.25rem;font-weight:700;letter-spacing:.08em">家計簿</h1>
-      <span style="color:#6a5e50;font-size:.65rem;letter-spacing:.12em">KAKEIBO</span>
+  <div style="background:var(--ink);padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
+    <div style="display:flex;align-items:center;gap:10px">
+      <svg width="108" height="32" viewBox="0 0 340 100" role="img" style="display:block">
+        <title>家計簿 KAKEIBO</title>
+        <circle cx="44" cy="50" r="36" fill="none" stroke="#4a4035" stroke-width="0.5"/>
+        <path d="M44,50 L44,14 A36,36 0 0,1 75,68 Z" fill="#2980b9" opacity="0.9"/>
+        <path d="M44,50 L75,68 A36,36 0 0,1 22,81 Z" fill="#e74c3c" opacity="0.85"/>
+        <path d="M44,50 L22,81 A36,36 0 0,1 10,29 Z" fill="#d4a017" opacity="0.9"/>
+        <path d="M44,50 L10,29 A36,36 0 0,1 44,14 Z" fill="#27ae60" opacity="0.85"/>
+        <circle cx="44" cy="50" r="16" fill="#1a1510"/>
+        <rect x="37" y="41" width="3.5" height="14" rx="1" fill="#2980b9" opacity="0.95"/>
+        <rect x="42" y="44" width="3.5" height="11" rx="1" fill="#e74c3c" opacity="0.95"/>
+        <rect x="47" y="42" width="3.5" height="13" rx="1" fill="#d4a017" opacity="0.95"/>
+        <rect x="52" y="46" width="3.5" height="9" rx="1" fill="#27ae60" opacity="0.95"/>
+        <text x="100" y="40" font-family="'Noto Serif JP',Georgia,serif" font-size="11" font-weight="500" fill="#9a8e82" letter-spacing="5">家　計　簿</text>
+        <text x="97" y="70" font-family="Georgia,serif" font-size="22" font-weight="400" fill="#f6f1ea" letter-spacing="5">KAKEIBO</text>
+      </svg>
     </div>
     <div style="display:flex;align-items:center;gap:10px">
       <span id="syncStatus" class="sync-dot ok">● 同期済</span>
@@ -163,18 +194,62 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
+// ── エラーログ設定 ──────────────────────────────────────────
+const LOG = {
+  _logs: [],
+  _max: 200,
+  _write(level, ...args) {
+    const entry = { ts: new Date().toISOString(), level, msg: args.map(a => {
+      try { return typeof a === "object" ? JSON.stringify(a, null, 2) : String(a); }
+      catch { return "[unstringifiable]"; }
+    }).join(" ") };
+    this._logs.push(entry);
+    if (this._logs.length > this._max) this._logs.shift();
+    console[level]?.(`[KAKEIBO ${level.toUpperCase()}]`, ...args);
+  },
+  info:  (...a) => LOG._write("info", ...a),
+  warn:  (...a) => LOG._write("warn", ...a),
+  error: (...a) => LOG._write("error", ...a),
+  download() {
+    const text = LOG._logs.map(l => `[${l.ts}] [${l.level.toUpperCase()}] ${l.msg}`).join("\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `kakeibo_log_${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+  },
+  clear() { LOG._logs = []; }
+};
+
+// グローバルエラーキャッチ（スクリプトエラー）
+window.addEventListener("error", e => {
+  LOG.error(`Uncaught: ${e.message} @ ${e.filename}:${e.lineno}`);
+});
+window.addEventListener("unhandledrejection", e => {
+  LOG.error(`UnhandledRejection: ${e.reason}`);
+});
+
+LOG.info("App initialized");
+
 const API_URL = "https://steep-forest-d09e.tani20kobe.workers.dev/";
 
 async function callClaude(system, userContent, maxTokens=1000) {
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:maxTokens, system, messages:[{role:"user",content:userContent}] })
-  });
-  if (!res.ok) throw new Error("API error: " + res.status);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || "API error");
-  return data.content?.map(b => b.text||"").join("") || "";
+  LOG.info(`callClaude start — maxTokens:${maxTokens}`);
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:maxTokens, system, messages:[{role:"user",content:userContent}] })
+    });
+    if (!res.ok) { LOG.error(`API HTTP error: ${res.status}`); throw new Error("API error: " + res.status); }
+    const data = await res.json();
+    if (data.error) { LOG.error("API error response:", data.error); throw new Error(data.error.message || "API error"); }
+    LOG.info("callClaude success");
+    return data.content?.map(b => b.text||"").join("") || "";
+  } catch(err) {
+    LOG.error("callClaude failed:", err.message);
+    throw err;
+  }
 }
 
 const firebaseConfig = {
@@ -366,11 +441,14 @@ function setSyncStatus(s){
   const el=document.getElementById("syncStatus"); if(!el) return;
   el.className="sync-dot "+(s==="ok"?"ok":s==="syncing"?"syncing":"err");
   el.textContent=s==="ok"?"● 同期済":s==="syncing"?"● 同期中...":"● オフライン";
+  if(s==="err") LOG.error("Firebase sync error");
 }
 function startSync(uid){
+  LOG.info(`startSync uid:${uid}`);
   unsubs.forEach(u=>u()); unsubs=[];
   const u1=onSnapshot(collection(db,`users/${uid}/records`),snap=>{
     records=snap.docs.map(d=>({id:d.id,...d.data()}));
+    LOG.info(`records loaded: ${records.length}件`);
     setSyncStatus("ok"); render();
   },()=>setSyncStatus("err"));
   const u2=onSnapshot(doc(db,`users/${uid}/meta/data`),snap=>{
@@ -1121,7 +1199,10 @@ ${weeks.map((w,i)=>`  ${w.label}: 予算${yen(cycleBudget[`w${i}`]||0)} / 実績
         <div class="card" style="padding:15px">
           <div class="section-title" style="margin-bottom:4px">📥 Obsidianエクスポート</div>
           <p style="font-size:.7rem;color:#9a8e82;margin-bottom:10px">${cycleKey}のデータ・AI相談ログ・振り返りメモを.mdファイルで出力します</p>
-          <button class="pbtn" id="btnExport" style="width:100%;background:var(--blue)">📥 ${cycleKey}のメモをダウンロード</button>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="pbtn" id="btnExport" style="width:100%;background:var(--blue)">📥 ${cycleKey} 月次メモをダウンロード</button>
+            <button class="pbtn" id="btnExportDaily" style="width:100%;background:var(--green)">📝 ${todayStr()} 今日の相談ログをダウンロード</button>
+          </div>
         </div>
 
       </div>`;
@@ -1321,6 +1402,53 @@ ${memo||"（記録なし）"}
         a.download=`finance_monthly_${cycleKey}.md`;
         a.click();
         showFlash(`${cycleKey}のメモをダウンロードしました`);
+      };
+
+      // ── 日次エクスポート ──
+      document.getElementById("btnExportDaily").onclick=()=>{
+        const today=todayStr();
+        const chats=chatHistory[cycleKey]||[];
+        // 今日のチャットだけ抽出
+        const todayChats=chats.filter(m=>m.ts&&m.ts.startsWith(today));
+        if(todayChats.length===0){
+          showFlash("今日の相談ログがありません");
+          return;
+        }
+        const chatMd=todayChats.map(m=>{
+          const time=m.ts?new Date(m.ts).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"";
+          return m.role==="user"?`**Q (${time}):** ${m.text}`:`**A:** ${m.text}`;
+        }).join("\n\n");
+
+        const md=`---
+tags: [finance, chat-log]
+date: ${today}
+---
+
+# 💬 AI相談ログ ${today}
+
+## 財務スナップショット（${today}時点）
+
+| 項目 | 金額 |
+|------|------|
+| SMBC残高 | ¥${debtRemaining.toLocaleString()} |
+| 純資産 | ${nw.netWorth<0?"▲":""}¥${Math.abs(nw.netWorth).toLocaleString()} |
+| 今月の残余 | ¥${remaining.toLocaleString()} |
+
+---
+
+## 相談内容
+
+${chatMd}
+
+---
+*→ 月次まとめ: [[finance_monthly_${cycleKey}]]*
+`;
+        const blob=new Blob([md],{type:"text/markdown;charset=utf-8"});
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=`finance_chat_${today}.md`;
+        a.click();
+        showFlash(`${today}の相談ログをダウンロードしました`);
       };
 
       // チャットエリアを最下部にスクロール
@@ -1524,7 +1652,14 @@ ${memo||"（記録なし）"}
         </div>
         <hr style="border:none;border-top:1px solid var(--cream)"/>
         <div>
-          <div class="section-title">📝 SMBC残高の月次記録</div>
+          <div class="section-title">🛠️ 開発者ログ</div>
+          <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">問題が発生した際、ログファイルをダウンロードしてサポートに共有してください。</p>
+          <div style="display:flex;gap:8px">
+            <button id="btnDownloadLog" style="background:var(--cream);border:1px solid var(--border);border-radius:6px;padding:8px 14px;font-family:inherit;font-size:.76rem;cursor:pointer;color:var(--ink)">📥 ログをダウンロード</button>
+            <button id="btnClearLog" style="background:none;border:1px solid var(--border);border-radius:6px;padding:8px 14px;font-family:inherit;font-size:.76rem;cursor:pointer;color:#9a8e82">ログを消去</button>
+          </div>
+          <div id="logCount" style="font-size:.65rem;color:#9a8e82;margin-top:6px"></div>
+        </div>
           <p style="font-size:.72rem;color:#9a8e82;margin-bottom:10px">返済後にSMBCアプリで残高を確認して記録してください。月1回更新で完済予測が正確になります。</p>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
             <div>
@@ -1588,6 +1723,12 @@ ${memo||"（記録なし）"}
         </div>
       </div>`;
     setTimeout(()=>{
+      const dlBtn=document.getElementById("btnDownloadLog");
+      const clBtn=document.getElementById("btnClearLog");
+      const lcEl=document.getElementById("logCount");
+      if(lcEl) lcEl.textContent=`現在 ${LOG._logs.length} 件のログ`;
+      if(dlBtn) dlBtn.onclick=()=>{ LOG.download(); showFlash("ログをダウンロードしました"); };
+      if(clBtn) clBtn.onclick=()=>{ LOG.clear(); if(lcEl) lcEl.textContent="ログを消去しました"; showFlash("ログを消去しました"); };
       document.getElementById("btnSaveAccounts").onclick=async()=>{
         document.querySelectorAll(".acc-input").forEach(inp=>{
           const i=parseInt(inp.dataset.i);
